@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { decrypt, encrypt, nextKey } from './crypto.js'
+import { decrypt, encrypt, MalformedPayloadError, nextKey } from './crypto.js'
 import {
   DeviceInfoSchema,
   parseStatusPayload,
@@ -137,6 +137,10 @@ export class PhilipsCoapClient {
         wake?.()
         wake = undefined
       } catch (error) {
+        // Some Philips firmware occasionally emits a same-token Observe packet
+        // that is not an encrypted status blob. Dropping one malformed packet is
+        // safer than tearing down an otherwise healthy long-lived observation.
+        if (error instanceof MalformedPayloadError) return
         fail(error)
       }
     }
