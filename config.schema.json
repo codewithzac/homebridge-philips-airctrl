@@ -47,6 +47,11 @@
               "type": "boolean",
               "default": false
             },
+            "exposeNaturalSwitch": {
+              "title": "Expose Natural Breeze switch",
+              "type": "boolean",
+              "default": false
+            },
             "exposeAutoPlusSwitch": {
               "title": "Expose Auto+ AI switch",
               "type": "boolean",
