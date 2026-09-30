@@ -53,6 +53,27 @@ describe('resolveModel', () => {
     expect(resolveModel('AC0850/81')).toBe(DEVICE_MODELS['AC0850/81'])
   })
 
+  it('scopes CX3550 transport and preset quirks to that model', () => {
+    const cx3550 = resolveModel('CX3550/01')
+    expect(cx3550).toMatchObject({
+      serviceType: 'fan',
+      quietObserve: true,
+      ignoreMalformedObservePushes: true,
+      restoreManualAfterPreset: true,
+      naturalSwitch: true,
+      oscillation: { key: 'D0320F', on: 17242, off: 0 },
+    })
+
+    const purifier = resolveModel('AC4220/12')
+    expect(purifier).toMatchObject({
+      serviceType: 'purifier',
+      quietObserve: false,
+      ignoreMalformedObservePushes: false,
+      restoreManualAfterPreset: false,
+      naturalSwitch: false,
+    })
+  })
+
   it('falls back to a generic config for an unknown model', () => {
     const config = resolveModel('XX9999/99', ApiGeneration.Gen3)
     expect(config.apiGeneration).toBe(ApiGeneration.Gen3)
