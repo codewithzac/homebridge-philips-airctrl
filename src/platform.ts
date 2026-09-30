@@ -122,7 +122,11 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
 
     try {
       await coordinator.start()
-      if (!coordinator.status) throw new Error('device returned no status')
+      if (!coordinator.status) {
+        this.log.info(`${device.host} connected; waiting for its first status update`)
+        coordinator.once('status', () => this.attach(device, coordinator))
+        return
+      }
     } catch (error) {
       if (this.shuttingDown) {
         this.discard(coordinator)
