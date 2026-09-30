@@ -147,7 +147,6 @@ describe('PhilipsAirAccessory', () => {
       [Gen3Key.POWER]: 1,
       [Gen3Key.MODE_A]: 1,
       [Gen3Key.MODE_B]: 3,
-      [Gen3Key.MODE_C]: 3,
     })
 
     await expect(fan.getCharacteristic(Characteristic.SwingMode).handleGetRequest())
@@ -162,7 +161,6 @@ describe('PhilipsAirAccessory', () => {
       [Gen3Key.POWER]: 1,
       [Gen3Key.MODE_A]: 1,
       [Gen3Key.MODE_B]: 17,
-      [Gen3Key.MODE_C]: 2,
     })
 
     coordinator.publish({ [Gen3Key.MODE_B]: 17, [Gen3Key.FAN_SPEED]: 2 })
@@ -172,7 +170,6 @@ describe('PhilipsAirAccessory', () => {
       [Gen3Key.POWER]: 1,
       [Gen3Key.MODE_A]: 1,
       [Gen3Key.MODE_B]: 2,
-      [Gen3Key.MODE_C]: 2,
     })
 
     const natural = accessory.getServiceById(Service.Switch, 'natural')!
@@ -181,7 +178,6 @@ describe('PhilipsAirAccessory', () => {
       [Gen3Key.POWER]: 1,
       [Gen3Key.MODE_A]: 1,
       [Gen3Key.MODE_B]: -126,
-      [Gen3Key.MODE_C]: 1,
     })
 
     coordinator.publish({ [Gen3Key.MODE_B]: -126, [Gen3Key.FAN_SPEED]: 2 })
