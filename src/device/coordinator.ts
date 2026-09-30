@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import type { Logging } from 'homebridge'
-import type { PhilipsCoapClient } from '../airctrl/client.js'
+import { NoInitialStatusError, type PhilipsCoapClient } from '../airctrl/client.js'
 import type { DeviceStatus } from '../airctrl/schema.js'
 
 export class DeviceCoordinator extends EventEmitter {
@@ -36,11 +36,17 @@ export class DeviceCoordinator extends EventEmitter {
   async start(): Promise<void> {
     await this.client.connect()
     if (this.shuttingDown) return
-    const { status, maxAge } = await this.client.getStatus()
-    if (this.shuttingDown) return
-    this.maxAgeS = maxAge
-    this.markAvailable()
-    this.ingest(status)
+    try {
+      const { status, maxAge } = await this.client.getStatus()
+      if (this.shuttingDown) return
+      this.maxAgeS = maxAge
+      this.markAvailable()
+      this.ingest(status)
+    } catch (error) {
+      if (!(error instanceof NoInitialStatusError)) throw error
+      if (this.shuttingDown) return
+      this.markAvailable(`${this.host} available; waiting for initial status`)
+    }
     this.resetBackoff()
     this.beginObserving()
   }
@@ -247,11 +253,17 @@ export class DeviceCoordinator extends EventEmitter {
       this.clientClosed = false
       await replacement.connect()
       if (this.shuttingDown) return
-      const { status, maxAge } = await replacement.getStatus()
-      if (this.shuttingDown) return
-      this.maxAgeS = maxAge
-      this.markAvailable(`${this.host} Reconnected`)
-      this.ingest(status)
+      try {
+        const { status, maxAge } = await replacement.getStatus()
+        if (this.shuttingDown) return
+        this.maxAgeS = maxAge
+        this.markAvailable(`${this.host} Reconnected`)
+        this.ingest(status)
+      } catch (error) {
+        if (!(error instanceof NoInitialStatusError)) throw error
+        if (this.shuttingDown) return
+        this.markAvailable(`${this.host} Reconnected; waiting for initial status`)
+      }
       this.resetBackoff()
       this.beginObserving()
     } catch (error) {
