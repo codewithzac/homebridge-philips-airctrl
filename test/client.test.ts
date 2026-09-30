@@ -180,7 +180,7 @@ describe('PhilipsCoapClient', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
-  it('rejects a waiting iterator on a malformed push and cancels it', async () => {
+  it('ignores a malformed observe push and accepts the next valid status', async () => {
     const { device, client } = await start(request => {
       if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
       if (pathOf(request) === '/sys/dev/status') {
@@ -195,7 +195,15 @@ describe('PhilipsCoapClient', () => {
 
     const next = iterator.next()
     await device.push('invalid encrypted payload')
-    await expect(next).rejects.toThrow()
+    await device.push(encrypt(
+      '0DC377BA',
+      JSON.stringify({ state: { reported: { D03102: 1 } } }),
+    ))
+
+    await expect(next).resolves.toEqual({ done: false, value: { D03102: 1 } })
+    expect(device.requests.some(request => observeValue(request) === 1)).toBe(false)
+
+    await iterator.return(undefined)
     await waitFor(() => device.requests.some(request => observeValue(request) === 1))
   })
 
