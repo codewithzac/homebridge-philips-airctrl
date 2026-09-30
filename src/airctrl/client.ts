@@ -29,6 +29,11 @@ export class NoInitialStatusError extends Error {
   }
 }
 
+export interface PhilipsCoapClientOptions {
+  quietObserve?: boolean
+  ignoreMalformedObservePushes?: boolean
+}
+
 export interface SetControlOptions {
   retries?: number
   retryDelayMs?: number
@@ -52,7 +57,11 @@ export class PhilipsCoapClient {
   /** Serialises {@link setControl}: the rolling key must advance one write at a time. */
   private controlChain: Promise<unknown> = Promise.resolve()
 
-  constructor(host: string, port = 5683) {
+  constructor(
+    host: string,
+    port = 5683,
+    private readonly options: PhilipsCoapClientOptions = {},
+  ) {
     this.socket = new CoapSocket(host, port)
   }
 
@@ -102,7 +111,7 @@ export class PhilipsCoapClient {
       observation = await this.socket.observe({
         path: STATUS_PATH,
         onNotify: () => {},
-        allowQuiet: true,
+        allowQuiet: this.options.quietObserve === true,
       })
       this.requireOpen()
       if (!observation.first) throw new NoInitialStatusError()
@@ -140,7 +149,7 @@ export class PhilipsCoapClient {
         // Some Philips firmware occasionally emits a same-token Observe packet
         // that is not an encrypted status blob. Dropping one malformed packet is
         // safer than tearing down an otherwise healthy long-lived observation.
-        if (error instanceof MalformedPayloadError) return
+        if (this.options.ignoreMalformedObservePushes === true && error instanceof MalformedPayloadError) return
         fail(error)
       }
     }
@@ -151,7 +160,7 @@ export class PhilipsCoapClient {
         path: STATUS_PATH,
         onNotify: enqueue,
         onError: fail,
-        allowQuiet: true,
+        allowQuiet: this.options.quietObserve === true,
       })
     } catch (error) {
       this.requireOpen()
