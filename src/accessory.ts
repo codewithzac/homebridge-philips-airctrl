@@ -175,7 +175,11 @@ export class PhilipsAirAccessory {
     this.syncOptionalServices(status)
 
     const cachedSleep = accessory.getServiceById(S.Switch, 'sleep')
-    if (config.exposeSleepSwitch && this.model.presetModes.sleep) {
+    if (
+      config.exposeSleepSwitch
+      && this.model.presetModes.sleep
+      && (this.model.presetModes.auto || this.model.restoreManualAfterPreset)
+    ) {
       this.sleep = cachedSleep ?? accessory.addService(S.Switch, 'Sleep Mode', 'sleep')
       this.purifier.addLinkedService(this.sleep)
       const on = this.sleep.getCharacteristic(C.On)
@@ -184,7 +188,10 @@ export class PhilipsAirAccessory {
       on.onSet(value => {
         const control = value
           ? this.model.presetModes.sleep
-          : this.model.presetModes.auto ?? Object.values(this.model.speeds)[this.lastManualMode - 1]
+          : this.model.presetModes.auto
+            ?? (this.model.restoreManualAfterPreset
+              ? Object.values(this.model.speeds)[this.lastManualMode - 1]
+              : undefined)
         if (!control) throw this.communicationError()
         return this.write(control)
       })
@@ -193,7 +200,7 @@ export class PhilipsAirAccessory {
     }
 
     const cachedNatural = accessory.getServiceById(S.Switch, 'natural')
-    if (config.exposeNaturalSwitch && this.model.presetModes.natural) {
+    if (config.exposeNaturalSwitch && this.model.naturalSwitch && this.model.presetModes.natural) {
       this.natural = cachedNatural ?? accessory.addService(S.Switch, 'Natural Breeze', 'natural')
       this.purifier.addLinkedService(this.natural)
       const on = this.natural.getCharacteristic(C.On)
@@ -574,9 +581,11 @@ export class PhilipsAirAccessory {
     const C = this.platform.Characteristic
     const speedCount = Object.keys(this.model.speeds).length
     const mode = this.speedMode(status)
-    const inSleep = this.matchesControl(status, this.model.presetModes.sleep)
-    const inNatural = this.matchesControl(status, this.model.presetModes.natural)
-    if (mode !== null && !inSleep && !inNatural) this.lastManualMode = mode
+    const inRestorablePreset = this.model.restoreManualAfterPreset && (
+      this.matchesControl(status, this.model.presetModes.sleep)
+      || this.matchesControl(status, this.model.presetModes.natural)
+    )
+    if (mode !== null && !inRestorablePreset) this.lastManualMode = mode
     const powered = this.powered(status)
 
     this.update(this.purifier.getCharacteristic(C.Active), powered ? C.Active.ACTIVE : C.Active.INACTIVE)
