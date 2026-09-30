@@ -47,6 +47,8 @@ export const DeviceConfigSchema = z.object({
   port: z.number().int().positive().default(5683),
   /** Sleep is a distinct device mode, so it is offered separately from the speed slider. */
   exposeSleepSwitch: z.boolean().default(false),
+  /** Natural Breeze is a distinct fan mode, exposed separately from the speed slider. */
+  exposeNaturalSwitch: z.boolean().default(false),
   /** Auto+ AI (D03180). */
   exposeAutoPlusSwitch: z.boolean().default(false),
   /** Beep (D03130). On writes 100, not 1 — see device/keys.ts. */
