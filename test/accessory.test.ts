@@ -39,6 +39,7 @@ const deviceConfig: DeviceConfig = {
   host: '192.0.2.1',
   port: 5683,
   exposeSleepSwitch: true,
+  exposeNaturalSwitch: true,
   exposeAutoPlusSwitch: true,
   exposeBeepSwitch: true,
   exposeLight: true,
@@ -113,6 +114,78 @@ describe('PhilipsAirAccessory', () => {
       accessory.getServiceById(Service.Switch, 'beep'),
     ]))
     expect(purifier.linkedServices).toHaveLength(9)
+  })
+
+  it('exposes CX3550 as a native fan with three speeds, modes, and hardware-verified oscillation', async () => {
+    const status: DeviceStatus = {
+      [Gen3Key.MODEL_ID]: 'CX3550/01',
+      [Gen3Key.POWER]: 1,
+      [Gen3Key.MODE_A]: 1,
+      [Gen3Key.MODE_B]: 2,
+      [Gen3Key.FAN_SPEED]: 2,
+      [Gen3Key.OSCILLATION]: 0,
+    }
+    const { accessory, coordinator } = setup(
+      deviceConfig,
+      status,
+      resolveModel('CX3550/01'),
+      new Accessory('Bedroom', uuid.generate('cx3550')),
+    )
+    const fan = accessory.getService(Service.Fanv2)!
+
+    expect(fan).toBeDefined()
+    expect(accessory.getService(Service.AirPurifier)).toBeUndefined()
+    expect(accessory.getService(Service.AirQualitySensor)).toBeUndefined()
+    expect(fan.isPrimaryService).toBe(true)
+    expect(fan.getCharacteristic(Characteristic.RotationSpeed).props.minStep)
+      .toBeCloseTo(100 / 3)
+
+    await expect(fan.getCharacteristic(Characteristic.RotationSpeed).handleGetRequest())
+      .resolves.toBeCloseTo(200 / 3)
+    await fan.getCharacteristic(Characteristic.RotationSpeed).handleSetRequest(100)
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({
+      [Gen3Key.POWER]: 1,
+      [Gen3Key.MODE_A]: 1,
+      [Gen3Key.MODE_B]: 3,
+      [Gen3Key.MODE_C]: 3,
+    })
+
+    await expect(fan.getCharacteristic(Characteristic.SwingMode).handleGetRequest())
+      .resolves.toBe(Characteristic.SwingMode.SWING_DISABLED)
+    await fan.getCharacteristic(Characteristic.SwingMode)
+      .handleSetRequest(Characteristic.SwingMode.SWING_ENABLED)
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({ [Gen3Key.OSCILLATION]: 23040 })
+
+    const sleep = accessory.getServiceById(Service.Switch, 'sleep')!
+    await sleep.getCharacteristic(Characteristic.On).handleSetRequest(true)
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({
+      [Gen3Key.POWER]: 1,
+      [Gen3Key.MODE_A]: 1,
+      [Gen3Key.MODE_B]: 17,
+      [Gen3Key.MODE_C]: 2,
+    })
+
+    coordinator.publish({ [Gen3Key.MODE_B]: 17, [Gen3Key.FAN_SPEED]: 2 })
+    await expect(sleep.getCharacteristic(Characteristic.On).handleGetRequest()).resolves.toBe(true)
+    await sleep.getCharacteristic(Characteristic.On).handleSetRequest(false)
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({
+      [Gen3Key.POWER]: 1,
+      [Gen3Key.MODE_A]: 1,
+      [Gen3Key.MODE_B]: 2,
+      [Gen3Key.MODE_C]: 2,
+    })
+
+    const natural = accessory.getServiceById(Service.Switch, 'natural')!
+    await natural.getCharacteristic(Characteristic.On).handleSetRequest(true)
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({
+      [Gen3Key.POWER]: 1,
+      [Gen3Key.MODE_A]: 1,
+      [Gen3Key.MODE_B]: -126,
+      [Gen3Key.MODE_C]: 1,
+    })
+
+    coordinator.publish({ [Gen3Key.MODE_B]: -126, [Gen3Key.FAN_SPEED]: 2 })
+    await expect(natural.getCharacteristic(Characteristic.On).handleGetRequest()).resolves.toBe(true)
   })
 
   it('makes every device-backed read fail with No Response while unavailable', async () => {
