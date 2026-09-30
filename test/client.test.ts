@@ -145,6 +145,41 @@ describe('PhilipsCoapClient', () => {
     )).length === 1)
   })
 
+  it('waits for a later push when the initial Observe notification is quiet', async () => {
+    const { client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+    })
+    await client.connect()
+
+    const socket = (client as unknown as { socket: CoapSocket }).socket
+    let notify!: (message: DecodedCoapMessage) => void
+    const cancel = vi.fn()
+    vi.spyOn(socket, 'observe').mockImplementation(async options => {
+      notify = options.onNotify
+      return { first: undefined, cancel }
+    })
+
+    const iterator = client.observe()
+    const next = iterator.next()
+    await Promise.resolve()
+
+    notify({
+      type: 1,
+      code: 69,
+      messageId: 2,
+      token: Buffer.from('01020304', 'hex'),
+      options: [],
+      payload: Buffer.from(encrypt(
+        '0DC377BA',
+        JSON.stringify({ state: { reported: { D03102: 1 } } }),
+      )),
+    })
+
+    await expect(next).resolves.toEqual({ done: false, value: { D03102: 1 } })
+    await iterator.return(undefined)
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
   it('rejects a waiting iterator on a malformed push and cancels it', async () => {
     const { device, client } = await start(request => {
       if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
