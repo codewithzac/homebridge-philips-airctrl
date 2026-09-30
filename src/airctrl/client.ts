@@ -22,6 +22,13 @@ export class NotConnectedError extends Error {
   }
 }
 
+export class NoInitialStatusError extends Error {
+  constructor() {
+    super('device accepted status observation but sent no initial status')
+    this.name = 'NoInitialStatusError'
+  }
+}
+
 export interface SetControlOptions {
   retries?: number
   retryDelayMs?: number
@@ -92,8 +99,13 @@ export class PhilipsCoapClient {
     this.requireKey()
     let observation: Observation | undefined
     try {
-      observation = await this.socket.observe({ path: STATUS_PATH, onNotify: () => {} })
+      observation = await this.socket.observe({
+        path: STATUS_PATH,
+        onNotify: () => {},
+        allowQuiet: true,
+      })
       this.requireOpen()
+      if (!observation.first) throw new NoInitialStatusError()
       const maxAgeOption = findOption(observation.first.options, CoapOption.MaxAge)
       const maxAge = maxAgeOption ? bufferToUint(maxAgeOption.value) : DEFAULT_MAX_AGE
       return {
@@ -135,6 +147,7 @@ export class PhilipsCoapClient {
         path: STATUS_PATH,
         onNotify: enqueue,
         onError: fail,
+        allowQuiet: true,
       })
     } catch (error) {
       this.requireOpen()
@@ -148,7 +161,7 @@ export class PhilipsCoapClient {
     this.observationFailures.set(observation, fail)
 
     try {
-      yield this.parseStatus(observation.first)
+      if (observation.first) yield this.parseStatus(observation.first)
       while (true) {
         if (failure) throw failure
         if (queue.length) {
