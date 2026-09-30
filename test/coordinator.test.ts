@@ -1,6 +1,6 @@
 import type { Logging } from 'homebridge'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PhilipsCoapClient } from '../src/airctrl/client.js'
+import { NoInitialStatusError, type PhilipsCoapClient } from '../src/airctrl/client.js'
 import { DeviceCoordinator } from '../src/device/coordinator.js'
 
 function logging() {
@@ -93,6 +93,34 @@ describe('DeviceCoordinator', () => {
     expect(coordinator.available).toBe(true)
     expect(statuses).toEqual([{ pwr: '1' }])
     expect(availability).toEqual([true])
+    expect(vi.getTimerCount()).toBe(1)
+
+    coordinator.shutdown()
+  })
+
+  it('keeps a quiet device available and accepts its first later status push', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    device.getStatus.mockRejectedValue(new NoInitialStatusError())
+    const log = logging()
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1')
+    const statuses: Record<string, unknown>[] = []
+
+    coordinator.on('status', status => statuses.push(status))
+
+    await coordinator.start()
+    await flush()
+
+    expect(coordinator.available).toBe(true)
+    expect(coordinator.status).toBeNull()
+    expect(device.observe).toHaveBeenCalledOnce()
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining('waiting for initial status'))
+
+    device.push({ pwr: '1', D0310C: 2 })
+    await flush()
+
+    expect(coordinator.status).toEqual({ pwr: '1', D0310C: 2 })
+    expect(statuses).toEqual([{ pwr: '1', D0310C: 2 }])
     expect(vi.getTimerCount()).toBe(1)
 
     coordinator.shutdown()
