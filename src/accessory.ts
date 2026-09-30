@@ -574,7 +574,9 @@ export class PhilipsAirAccessory {
     const C = this.platform.Characteristic
     const speedCount = Object.keys(this.model.speeds).length
     const mode = this.speedMode(status)
-    if (mode !== null) this.lastManualMode = mode
+    const inSleep = this.matchesControl(status, this.model.presetModes.sleep)
+    const inNatural = this.matchesControl(status, this.model.presetModes.natural)
+    if (mode !== null && !inSleep && !inNatural) this.lastManualMode = mode
     const powered = this.powered(status)
 
     this.update(this.purifier.getCharacteristic(C.Active), powered ? C.Active.ACTIVE : C.Active.INACTIVE)
