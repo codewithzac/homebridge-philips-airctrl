@@ -110,10 +110,17 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
 
   private async setUpDevice(device: DeviceConfig): Promise<void> {
     if (this.shuttingDown) return
+    const configuredModel = findModel(device.model ?? '')
+    const clientOptions = configuredModel
+      ? {
+          quietObserve: configuredModel.quietObserve,
+          ignoreMalformedObservePushes: configuredModel.ignoreMalformedObservePushes,
+        }
+      : undefined
     const makeClient = async (): Promise<PhilipsCoapClient> =>
-      new PhilipsCoapClient(device.host, device.port)
+      new PhilipsCoapClient(device.host, device.port, clientOptions)
     const coordinator = new DeviceCoordinator(
-      new PhilipsCoapClient(device.host, device.port),
+      new PhilipsCoapClient(device.host, device.port, clientOptions),
       this.log,
       device.host,
       makeClient,
