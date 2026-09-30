@@ -816,6 +816,12 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
   }),
 
   // --- CX3550 ---
+  // Hardware-verified quirks:
+  // - /sys/dev/status Observe may be initially quiet.
+  // - malformed same-token Observe packets can occur and should be ignored.
+  // - oscillation writes ON as 17242, while status reports a different non-zero value
+  //   (23040 observed); consumers therefore treat any non-zero report as enabled.
+  // - Sleep/Natural are distinct MODE_B presets and return to the last manual speed.
   CX3550: config({
     apiGeneration: ApiGeneration.Gen3,
     serviceType: 'fan',
