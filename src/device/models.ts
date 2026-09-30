@@ -24,6 +24,10 @@ export interface DeviceModelConfig {
   createFan: boolean
   serviceType: 'purifier' | 'fan'
   oscillation?: { key: string, on: string | number, off: string | number }
+  quietObserve: boolean
+  ignoreMalformedObservePushes: boolean
+  restoreManualAfterPreset: boolean
+  naturalSwitch: boolean
 }
 
 function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
@@ -38,6 +42,10 @@ function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGenera
     unavailableSensors: [],
     createFan: true,
     serviceType: 'purifier',
+    quietObserve: false,
+    ignoreMalformedObservePushes: false,
+    restoreManualAfterPreset: false,
+    naturalSwitch: false,
     ...partial,
   }
 }
@@ -812,6 +820,10 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
     apiGeneration: ApiGeneration.Gen3,
     serviceType: 'fan',
     oscillation: { key: Gen3Key.OSCILLATION, on: 17242, off: 0 },
+    quietObserve: true,
+    ignoreMalformedObservePushes: true,
+    restoreManualAfterPreset: true,
+    naturalSwitch: true,
     presetModes: {
       speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1 },
       speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2 },
