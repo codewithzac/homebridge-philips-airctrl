@@ -153,7 +153,7 @@ describe('PhilipsAirAccessory', () => {
       .resolves.toBe(Characteristic.SwingMode.SWING_DISABLED)
     await fan.getCharacteristic(Characteristic.SwingMode)
       .handleSetRequest(Characteristic.SwingMode.SWING_ENABLED)
-    expect(coordinator.setControl).toHaveBeenLastCalledWith({ [Gen3Key.OSCILLATION]: 23040 })
+    expect(coordinator.setControl).toHaveBeenLastCalledWith({ [Gen3Key.OSCILLATION]: 17242 })
 
     const sleep = accessory.getServiceById(Service.Switch, 'sleep')!
     await sleep.getCharacteristic(Characteristic.On).handleSetRequest(true)
