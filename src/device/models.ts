@@ -22,6 +22,8 @@ export interface DeviceModelConfig {
   unavailableFilters: string[]
   unavailableSensors: string[]
   createFan: boolean
+  serviceType: 'purifier' | 'fan'
+  oscillation?: { key: string, on: string | number, off: string | number }
 }
 
 function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
@@ -35,6 +37,7 @@ function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGenera
     unavailableFilters: [],
     unavailableSensors: [],
     createFan: true,
+    serviceType: 'purifier',
     ...partial,
   }
 }
@@ -807,6 +810,8 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
   // --- CX3550 ---
   CX3550: config({
     apiGeneration: ApiGeneration.Gen3,
+    serviceType: 'fan',
+    oscillation: { key: Gen3Key.OSCILLATION, on: 23040, off: 0 },
     presetModes: {
       speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1, [Gen3Key.MODE_C]: 1 },
       speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2, [Gen3Key.MODE_C]: 2 },
