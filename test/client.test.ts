@@ -18,9 +18,10 @@ describe('PhilipsCoapClient', () => {
 
   async function start(
     handler: Parameters<typeof startFakeDevice>[0],
+    options?: ConstructorParameters<typeof PhilipsCoapClient>[2],
   ): Promise<{ device: FakeDevice, client: PhilipsCoapClient }> {
     const device = await startFakeDevice(handler)
-    const client = new PhilipsCoapClient('127.0.0.1', device.port)
+    const client = new PhilipsCoapClient('127.0.0.1', device.port, options)
     devices.push(device)
     clients.push(client)
     return { device, client }
@@ -180,7 +181,7 @@ describe('PhilipsCoapClient', () => {
     expect(cancel).toHaveBeenCalledOnce()
   })
 
-  it('ignores a malformed observe push and accepts the next valid status', async () => {
+  it('ignores a malformed observe push only when explicitly enabled', async () => {
     const { device, client } = await start(request => {
       if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
       if (pathOf(request) === '/sys/dev/status') {
@@ -188,7 +189,7 @@ describe('PhilipsCoapClient', () => {
           payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: {} } })),
         }
       }
-    })
+    }, { ignoreMalformedObservePushes: true })
     await client.connect()
     const iterator = client.observe()
     await iterator.next()
@@ -204,6 +205,25 @@ describe('PhilipsCoapClient', () => {
     expect(device.requests.some(request => observeValue(request) === 1)).toBe(false)
 
     await iterator.return(undefined)
+    await waitFor(() => device.requests.some(request => observeValue(request) === 1))
+  })
+
+  it('preserves the default behavior of rejecting malformed observe pushes', async () => {
+    const { device, client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (pathOf(request) === '/sys/dev/status') {
+        return {
+          payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: {} } })),
+        }
+      }
+    })
+    await client.connect()
+    const iterator = client.observe()
+    await iterator.next()
+
+    const next = iterator.next()
+    await device.push('invalid encrypted payload')
+    await expect(next).rejects.toThrow()
     await waitFor(() => device.requests.some(request => observeValue(request) === 1))
   })
 
