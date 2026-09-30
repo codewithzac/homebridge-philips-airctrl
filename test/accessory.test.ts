@@ -611,27 +611,16 @@ describe('PhilipsAirAccessory', () => {
     ]))
   })
 
-  it('keeps Sleep on models without Auto and falls back to the last manual speed', async () => {
+  it('removes cached Sleep when the model has no Auto preset', () => {
     const cached = new Accessory('Office', uuid.generate('no-auto'))
     cached.addService(Service.Switch, 'Sleep Mode', 'sleep')
-    const { accessory, coordinator } = setup(deviceConfig, {
+    const { accessory } = setup(deviceConfig, {
       pwr: '1',
       mode: 'M',
-      om: '2',
+      om: 's',
       pm25: 8,
     }, resolveModel('AC5659'), cached)
 
-    const sleep = accessory.getServiceById(Service.Switch, 'sleep')!
-    expect(sleep).toBeDefined()
-
-    coordinator.publish({ om: 's' })
-    await expect(sleep.getCharacteristic(Characteristic.On).handleGetRequest()).resolves.toBe(true)
-
-    await sleep.getCharacteristic(Characteristic.On).handleSetRequest(false)
-    expect(coordinator.setControl).toHaveBeenLastCalledWith({
-      pwr: '1',
-      mode: 'M',
-      om: '2',
-    })
+    expect(accessory.getServiceById(Service.Switch, 'sleep')).toBeUndefined()
   })
 })
