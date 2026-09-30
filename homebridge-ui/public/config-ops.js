@@ -20,6 +20,7 @@ export function addDeviceToConfig(blocks, device) {
     model: device.model,
     exposeLight: true,
     exposeSleepSwitch: false,
+    exposeNaturalSwitch: false,
     exposeAutoPlusSwitch: false,
     exposeBeepSwitch: false,
   })
