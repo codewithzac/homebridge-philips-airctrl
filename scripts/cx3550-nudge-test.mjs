@@ -46,19 +46,38 @@ try {
     } else {
       console.log('A status arrived without a nudge:')
       console.dir(spontaneous.value, { depth: null })
-      console.log('No info request was attempted.')
+      console.log('No plain status GET was attempted.')
     }
   } else {
-    console.log('No status arrived within 1.5 s. Performing ONE GET /sys/dev/info...')
+    console.log('No status arrived within 1.5 s. Performing ONE plain GET /sys/dev/status...')
     const started = Date.now()
 
-    const info = await client.getInfo()
-    console.log('Info response: success')
-    console.dir(info, { depth: null })
+    // Deliberately use the same CoAP socket/session as the active Observe.
+    // This is a temporary diagnostic probe; TypeScript's private field is still
+    // a normal property in the emitted JavaScript.
+    let getResult
+    try {
+      getResult = await withTimeout(
+        client.socket.request({
+          method: 'GET',
+          path: '/sys/dev/status',
+          timeoutMs: 2000,
+        }),
+        2500,
+      )
+    } catch (error) {
+      console.log('Plain status GET failed:', error)
+    }
+
+    if (getResult?.timeout) {
+      console.log('Plain status GET: no direct response within 2.5 s.')
+    } else if (getResult) {
+      console.log(`Plain status GET direct response: code=${getResult.code}, payload length=${getResult.payload?.length ?? 0}`)
+    }
 
     const result = await withTimeout(pendingStatus, 5000)
     if (result?.timeout) {
-      console.log('No Observe status arrived within 5 s of GET /sys/dev/info.')
+      console.log('No Observe status arrived within 5 s of the plain status GET.')
       process.exitCode = 1
     } else if (result.done) {
       console.log('Observe ended without yielding a status.')
