@@ -30,6 +30,8 @@ export interface ObserveOptions {
   onNotify: (message: DecodedCoapMessage) => void
   onError?: (error: Error) => void
   timeoutMs?: number
+  /** Temporary diagnostic option: send the Observe registration as CON instead of NON. */
+  confirmable?: boolean
   /**
    * Some Philips firmware accepts an Observe registration but sends no initial
    * notification. When true, initial silence resolves as a live observation
@@ -117,6 +119,7 @@ export class CoapSocket {
     observeValue?: number,
     payload?: string | Buffer,
     onError?: (error: Error) => void,
+    confirmable = false,
   ): void {
     if (this.closed) throw new Error('socket is closed')
     const options = uriPathOptions(path)
@@ -124,7 +127,7 @@ export class CoapSocket {
       options.push({ number: CoapOption.Observe, value: uintToBuffer(observeValue) })
     }
     this.socket.send(encode({
-      type: CoapType.NonConfirmable,
+      type: confirmable ? CoapType.Confirmable : CoapType.NonConfirmable,
       code: method === 'POST' ? CoapCode.POST : CoapCode.GET,
       messageId: this.nextMessageId(),
       token,
@@ -179,7 +182,7 @@ export class CoapSocket {
 
   /** Register an observation. `onNotify` fires for every push after the first. */
   async observe(options: ObserveOptions): Promise<Observation> {
-    const { path, onNotify, onError, timeoutMs = DEFAULT_TIMEOUT_MS, allowQuiet = false } = options
+    const { path, onNotify, onError, timeoutMs = DEFAULT_TIMEOUT_MS, allowQuiet = false, confirmable = false } = options
     const token = randomBytes(4)
     const key = token.toString('hex')
 
@@ -212,7 +215,7 @@ export class CoapSocket {
       })
 
       try {
-        this.transmit('GET', path, token, 0)
+        this.transmit('GET', path, token, 0, undefined, undefined, confirmable)
       } catch (error) {
         clearTimeout(timer)
         this.handlers.delete(key)
