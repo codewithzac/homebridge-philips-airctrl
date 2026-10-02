@@ -16,10 +16,6 @@ const client = new PhilipsCoapClient(host, port, {
   ignoreMalformedObservePushes: true,
 })
 
-function wait(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 function withTimeout(promise, ms) {
   let timer
   return Promise.race([
@@ -43,56 +39,38 @@ function showStatus(message, label) {
   }
 }
 
-let firstObservation
-let secondObservation
+let observation
 
 try {
   console.log(`Connecting to ${host}:${port}...`)
   await client.connect()
   console.log('Connected.')
 
-  console.log('Registering first quiet Observe for 1.5 s...')
-  firstObservation = await client.socket.observe({
+  console.log('Registering ONE Confirmable (CON) Observe...')
+  let resolvePush
+  const pushPromise = new Promise(resolve => {
+    resolvePush = resolve
+  })
+
+  observation = await client.socket.observe({
     path: '/sys/dev/status',
     allowQuiet: true,
     timeoutMs: 1500,
-    onNotify: () => {},
+    confirmable: true,
+    onNotify: message => resolvePush(message),
   })
 
-  if (firstObservation.first) {
-    showStatus(firstObservation.first, 'A status arrived on the first Observe; no cancellation test needed:')
+  if (observation.first) {
+    showStatus(observation.first, 'Confirmable Observe immediately returned a status:')
   } else {
-    console.log('First Observe stayed quiet. Cancelling it with Observe=1...')
-    firstObservation.cancel()
-    firstObservation = undefined
+    console.log('Confirmable Observe started quietly. Waiting 5 s for a notification...')
+    const result = await withTimeout(pushPromise, 5000)
 
-    await wait(250)
-
-    console.log('Registering ONE fresh Observe...')
-    let resolvePush
-    const pushPromise = new Promise(resolve => {
-      resolvePush = resolve
-    })
-
-    secondObservation = await client.socket.observe({
-      path: '/sys/dev/status',
-      allowQuiet: true,
-      timeoutMs: 1500,
-      onNotify: message => resolvePush(message),
-    })
-
-    if (secondObservation.first) {
-      showStatus(secondObservation.first, 'Fresh Observe immediately returned a status:')
+    if (result?.timeout) {
+      console.log('No status arrived within 5 s of the Confirmable Observe.')
+      process.exitCode = 1
     } else {
-      console.log('Fresh Observe also started quietly. Waiting 5 s for a notification...')
-      const result = await withTimeout(pushPromise, 5000)
-
-      if (result?.timeout) {
-        console.log('No status arrived within 5 s of cancelling and re-registering Observe.')
-        process.exitCode = 1
-      } else {
-        showStatus(result, 'Status arrived after re-registering Observe:')
-      }
+      showStatus(result, 'Status arrived after Confirmable Observe:')
     }
   }
 } catch (error) {
@@ -100,12 +78,7 @@ try {
   process.exitCode = 1
 } finally {
   try {
-    firstObservation?.cancel()
-  } catch {
-    // Ignore cleanup errors.
-  }
-  try {
-    secondObservation?.cancel()
+    observation?.cancel()
   } catch {
     // Ignore cleanup errors.
   }
