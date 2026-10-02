@@ -46,23 +46,19 @@ try {
     } else {
       console.log('A status arrived without a nudge:')
       console.dir(spontaneous.value, { depth: null })
-      console.log('No re-sync was attempted.')
+      console.log('No info request was attempted.')
     }
   } else {
-    console.log('No status arrived within 1.5 s. Performing ONE re-sync...')
+    console.log('No status arrived within 1.5 s. Performing ONE GET /sys/dev/info...')
     const started = Date.now()
 
-    try {
-      await client.connect(2000)
-      console.log('Re-sync response: success')
-    } catch (error) {
-      console.log('Re-sync response: failed')
-      throw error
-    }
+    const info = await client.getInfo()
+    console.log('Info response: success')
+    console.dir(info, { depth: null })
 
     const result = await withTimeout(pendingStatus, 5000)
     if (result?.timeout) {
-      console.log('No Observe status arrived within 5 s of the re-sync.')
+      console.log('No Observe status arrived within 5 s of GET /sys/dev/info.')
       process.exitCode = 1
     } else if (result.done) {
       console.log('Observe ended without yielding a status.')
