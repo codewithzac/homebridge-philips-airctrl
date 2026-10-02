@@ -35,8 +35,6 @@ try {
   await client.connect()
   console.log('Connected.')
 
-  // Start the Observe request and give a normally-chatty device a short chance
-  // to send an initial status before we deliberately nudge it.
   console.log('Starting quiet Observe subscription...')
   const pendingStatus = iterator.next()
   const spontaneous = await withTimeout(pendingStatus, 1500)
@@ -48,24 +46,23 @@ try {
     } else {
       console.log('A status arrived without a nudge:')
       console.dir(spontaneous.value, { depth: null })
-      console.log('Nothing was written to the device.')
+      console.log('No re-sync was attempted.')
     }
   } else {
-    console.log('No status arrived within 1.5 s. Sending ONE empty control write...')
+    console.log('No status arrived within 1.5 s. Performing ONE re-sync...')
     const started = Date.now()
 
-    const accepted = await client.setControl({}, {
-      retries: 0,
-      resync: false,
-      timeoutMs: 2000,
-      budgetMs: 2000,
-    })
-
-    console.log(`Empty control response: ${accepted ? 'success' : 'failed/rejected'}`)
+    try {
+      await client.connect(2000)
+      console.log('Re-sync response: success')
+    } catch (error) {
+      console.log('Re-sync response: failed')
+      throw error
+    }
 
     const result = await withTimeout(pendingStatus, 5000)
     if (result?.timeout) {
-      console.log('No Observe status arrived within 5 s of the empty control write.')
+      console.log('No Observe status arrived within 5 s of the re-sync.')
       process.exitCode = 1
     } else if (result.done) {
       console.log('Observe ended without yielding a status.')
