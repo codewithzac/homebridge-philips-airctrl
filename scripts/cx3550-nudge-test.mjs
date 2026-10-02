@@ -16,6 +16,8 @@ const client = new PhilipsCoapClient(host, port, {
   ignoreMalformedObservePushes: true,
 })
 
+const iterator = client.observe()[Symbol.asyncIterator]()
+
 function withTimeout(promise, ms) {
   let timer
   return Promise.race([
@@ -28,49 +30,47 @@ function withTimeout(promise, ms) {
   })
 }
 
-function showStatus(message, label) {
-  try {
-    const status = client.parseStatus(message)
-    console.log(label)
-    console.dir(status, { depth: null })
-  } catch (error) {
-    console.log(`${label} (packet arrived but status parsing failed)`)
-    console.log(error)
-  }
-}
-
-let observation
-
 try {
   console.log(`Connecting to ${host}:${port}...`)
   await client.connect()
   console.log('Connected.')
 
-  console.log('Registering ONE Confirmable (CON) Observe...')
-  let resolvePush
-  const pushPromise = new Promise(resolve => {
-    resolvePush = resolve
-  })
+  console.log('Starting quiet Observe subscription...')
+  const pendingStatus = iterator.next()
+  const spontaneous = await withTimeout(pendingStatus, 1500)
 
-  observation = await client.socket.observe({
-    path: '/sys/dev/status',
-    allowQuiet: true,
-    timeoutMs: 1500,
-    confirmable: true,
-    onNotify: message => resolvePush(message),
-  })
-
-  if (observation.first) {
-    showStatus(observation.first, 'Confirmable Observe immediately returned a status:')
-  } else {
-    console.log('Confirmable Observe started quietly. Waiting 5 s for a notification...')
-    const result = await withTimeout(pushPromise, 5000)
-
-    if (result?.timeout) {
-      console.log('No status arrived within 5 s of the Confirmable Observe.')
+  if (!spontaneous?.timeout) {
+    if (spontaneous.done) {
+      console.log('Observe ended before the test could run.')
       process.exitCode = 1
     } else {
-      showStatus(result, 'Status arrived after Confirmable Observe:')
+      console.log('A status arrived without a nudge:')
+      console.dir(spontaneous.value, { depth: null })
+      console.log('No control write was attempted.')
+    }
+  } else {
+    console.log('No status arrived within 1.5 s. Sending ONE control write: D0310A = 1...')
+    const started = Date.now()
+
+    const accepted = await client.setControl({ D0310A: 1 }, {
+      retries: 0,
+      resync: false,
+      timeoutMs: 2000,
+      budgetMs: 2000,
+    })
+
+    console.log(`Control response: ${accepted ? 'success' : 'failed/rejected'}`)
+
+    const result = await withTimeout(pendingStatus, 5000)
+    if (result?.timeout) {
+      console.log('No Observe status arrived within 5 s of D0310A = 1.')
+      process.exitCode = 1
+    } else if (result.done) {
+      console.log('Observe ended without yielding a status.')
+      process.exitCode = 1
+    } else {
+      console.log(`Observe status arrived after ${Date.now() - started} ms:`)
+      console.dir(result.value, { depth: null })
     }
   }
 } catch (error) {
@@ -78,9 +78,9 @@ try {
   process.exitCode = 1
 } finally {
   try {
-    observation?.cancel()
+    await iterator.return?.()
   } catch {
-    // Ignore cleanup errors.
+    // Ignore cleanup errors from an already-ended observation.
   }
   client.close()
 }
