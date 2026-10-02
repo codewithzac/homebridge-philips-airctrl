@@ -16,7 +16,9 @@ const client = new PhilipsCoapClient(host, port, {
   ignoreMalformedObservePushes: true,
 })
 
-const iterator = client.observe()[Symbol.asyncIterator]()
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
 
 function withTimeout(promise, ms) {
   let timer
@@ -30,61 +32,67 @@ function withTimeout(promise, ms) {
   })
 }
 
+function showStatus(message, label) {
+  try {
+    const status = client.parseStatus(message)
+    console.log(label)
+    console.dir(status, { depth: null })
+  } catch (error) {
+    console.log(`${label} (packet arrived but status parsing failed)`)
+    console.log(error)
+  }
+}
+
+let firstObservation
+let secondObservation
+
 try {
   console.log(`Connecting to ${host}:${port}...`)
   await client.connect()
   console.log('Connected.')
 
-  console.log('Starting quiet Observe subscription...')
-  const pendingStatus = iterator.next()
-  const spontaneous = await withTimeout(pendingStatus, 1500)
+  console.log('Registering first quiet Observe for 1.5 s...')
+  firstObservation = await client.socket.observe({
+    path: '/sys/dev/status',
+    allowQuiet: true,
+    timeoutMs: 1500,
+    onNotify: () => {},
+  })
 
-  if (!spontaneous?.timeout) {
-    if (spontaneous.done) {
-      console.log('Observe ended before the test could run.')
-      process.exitCode = 1
-    } else {
-      console.log('A status arrived without a nudge:')
-      console.dir(spontaneous.value, { depth: null })
-      console.log('No plain status GET was attempted.')
-    }
+  if (firstObservation.first) {
+    showStatus(firstObservation.first, 'A status arrived on the first Observe; no cancellation test needed:')
   } else {
-    console.log('No status arrived within 1.5 s. Performing ONE plain GET /sys/dev/status...')
-    const started = Date.now()
+    console.log('First Observe stayed quiet. Cancelling it with Observe=1...')
+    firstObservation.cancel()
+    firstObservation = undefined
 
-    // Deliberately use the same CoAP socket/session as the active Observe.
-    // This is a temporary diagnostic probe; TypeScript's private field is still
-    // a normal property in the emitted JavaScript.
-    let getResult
-    try {
-      getResult = await withTimeout(
-        client.socket.request({
-          method: 'GET',
-          path: '/sys/dev/status',
-          timeoutMs: 2000,
-        }),
-        2500,
-      )
-    } catch (error) {
-      console.log('Plain status GET failed:', error)
-    }
+    await wait(250)
 
-    if (getResult?.timeout) {
-      console.log('Plain status GET: no direct response within 2.5 s.')
-    } else if (getResult) {
-      console.log(`Plain status GET direct response: code=${getResult.code}, payload length=${getResult.payload?.length ?? 0}`)
-    }
+    console.log('Registering ONE fresh Observe...')
+    let resolvePush
+    const pushPromise = new Promise(resolve => {
+      resolvePush = resolve
+    })
 
-    const result = await withTimeout(pendingStatus, 5000)
-    if (result?.timeout) {
-      console.log('No Observe status arrived within 5 s of the plain status GET.')
-      process.exitCode = 1
-    } else if (result.done) {
-      console.log('Observe ended without yielding a status.')
-      process.exitCode = 1
+    secondObservation = await client.socket.observe({
+      path: '/sys/dev/status',
+      allowQuiet: true,
+      timeoutMs: 1500,
+      onNotify: message => resolvePush(message),
+    })
+
+    if (secondObservation.first) {
+      showStatus(secondObservation.first, 'Fresh Observe immediately returned a status:')
     } else {
-      console.log(`Observe status arrived after ${Date.now() - started} ms:`)
-      console.dir(result.value, { depth: null })
+      console.log('Fresh Observe also started quietly. Waiting 5 s for a notification...')
+      const result = await withTimeout(pushPromise, 5000)
+
+      if (result?.timeout) {
+        console.log('No status arrived within 5 s of cancelling and re-registering Observe.')
+        process.exitCode = 1
+      } else {
+        showStatus(result, 'Status arrived after re-registering Observe:')
+      }
     }
   }
 } catch (error) {
@@ -92,9 +100,14 @@ try {
   process.exitCode = 1
 } finally {
   try {
-    await iterator.return?.()
+    firstObservation?.cancel()
   } catch {
-    // Ignore cleanup errors from an already-ended observation.
+    // Ignore cleanup errors.
+  }
+  try {
+    secondObservation?.cancel()
+  } catch {
+    // Ignore cleanup errors.
   }
   client.close()
 }
