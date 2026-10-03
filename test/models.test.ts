@@ -62,6 +62,7 @@ describe('resolveModel', () => {
       restoreManualAfterPreset: true,
       naturalSwitch: true,
       initialStatusNudge: { D0310A: 1 },
+      statusSilenceProbeMs: 10 * 60 * 1000,
       oscillation: { key: 'D0320F', on: 17242, off: 0 },
     })
 
@@ -86,6 +87,7 @@ describe('resolveModel', () => {
       expect(model.restoreManualAfterPreset).toBe(false)
       expect(model.naturalSwitch).toBe(false)
       expect(model.initialStatusNudge).toBeUndefined()
+      expect(model.statusSilenceProbeMs).toBeUndefined()
       expect(model.oscillation).toBeUndefined()
     }
   })
