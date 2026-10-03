@@ -30,13 +30,18 @@ function withTimeout(promise, ms) {
   })
 }
 
+function printStatus(label, status) {
+  console.log(label)
+  console.dir(status, { depth: null })
+}
+
 try {
   console.log(`Connecting to ${host}:${port}...`)
   await client.connect()
   console.log('Connected.')
 
   console.log('Starting quiet Observe subscription...')
-  const pendingStatus = iterator.next()
+  let pendingStatus = iterator.next()
   const spontaneous = await withTimeout(pendingStatus, 1500)
 
   if (!spontaneous?.timeout) {
@@ -44,9 +49,8 @@ try {
       console.log('Observe ended before the test could run.')
       process.exitCode = 1
     } else {
-      console.log('A status arrived without a nudge:')
-      console.dir(spontaneous.value, { depth: null })
-      console.log('No control write was attempted.')
+      printStatus('A status arrived without a nudge:', spontaneous.value)
+      pendingStatus = iterator.next()
     }
   } else {
     console.log('No status arrived within 1.5 s. Sending ONE control write: D0310A = 1...')
@@ -71,7 +75,37 @@ try {
     } else {
       console.log(`Observe status arrived after ${Date.now() - started} ms:`)
       console.dir(result.value, { depth: null })
+      pendingStatus = iterator.next()
     }
+  }
+
+  if (process.exitCode !== 1) {
+    console.log('')
+    console.log('Monitoring subsequent Observe pushes for 90 s.')
+    console.log('Change something in Air+ now; every status notification will be printed.')
+    console.log('Press Ctrl+C to stop early.')
+    console.log('')
+
+    const deadline = Date.now() + 90000
+    let count = 0
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now()
+      const result = await withTimeout(pendingStatus, remaining)
+
+      if (result?.timeout) break
+      if (result.done) {
+        console.log('Observe ended while monitoring.')
+        process.exitCode = 1
+        break
+      }
+
+      count++
+      printStatus(`Observe push #${count}:`, result.value)
+      pendingStatus = iterator.next()
+    }
+
+    console.log(`Monitoring complete. Subsequent Observe pushes seen: ${count}`)
   }
 } catch (error) {
   console.error('Test failed:', error)
