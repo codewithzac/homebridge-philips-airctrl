@@ -136,7 +136,38 @@ describe('DeviceCoordinator', () => {
     expect(statuses).toEqual([{ D03102: 0, D0310A: 1, D0310C: 2 }])
     expect(vi.getTimerCount()).toBe(1)
 
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(63_499)
+    expect(device.setControl).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(device.setControl).toHaveBeenCalledTimes(2)
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(device.setControl).toHaveBeenCalledTimes(2)
+    coordinator.shutdown()
+  })
+
+  it('cancels the delayed fallback nudge as soon as the first nudge gets a status', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    const coordinator = new DeviceCoordinator(
+      device,
+      logging(),
+      '192.0.2.1',
+      undefined,
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
+    )
+
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    await flush()
+    expect(device.setControl).toHaveBeenCalledOnce()
+
+    device.push({ D03102: 1, D0310A: 1, D0310C: 2 })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(120_000)
     expect(device.setControl).toHaveBeenCalledOnce()
     coordinator.shutdown()
   })
@@ -294,7 +325,7 @@ describe('DeviceCoordinator', () => {
       logging(),
       '192.0.2.1',
       reconnectClient,
-      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
     )
 
     await coordinator.start()
