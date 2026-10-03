@@ -18,7 +18,6 @@ function client(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
     getStatus: vi.fn().mockResolvedValue({ status, maxAge }),
     getInfo: vi.fn().mockResolvedValue({ modelid: 'TEST' }),
     refreshObservations: vi.fn().mockReturnValue(1),
-    cancelObservations: vi.fn().mockReturnValue(1),
     observe: vi.fn(async function* () {
       yield status
       await new Promise(() => {})
@@ -340,7 +339,6 @@ describe('DeviceCoordinator', () => {
 
     expect(device.refreshObservations).toHaveBeenCalledOnce()
     expect(device.getInfo).toHaveBeenCalledOnce()
-    expect(device.cancelObservations).not.toHaveBeenCalled()
     expect(reconnectClient).not.toHaveBeenCalled()
     expect(coordinator.available).toBe(true)
     expect(log.debug).toHaveBeenCalledWith(expect.stringContaining('liveness probe succeeded'))
@@ -376,7 +374,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.cancelObservations).toHaveBeenCalledOnce()
+    expect(device.iterator.return).toHaveBeenCalledOnce()
     expect(device.observe).toHaveBeenCalledTimes(2)
     expect(device.getInfo).toHaveBeenCalledTimes(2)
     expect(coordinator.available).toBe(true)
@@ -412,7 +410,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(coordinator.available).toBe(false)
-    expect(device.cancelObservations).toHaveBeenCalledOnce()
+    expect(device.iterator.return).toHaveBeenCalledOnce()
 
     await vi.advanceTimersByTimeAsync(5_000)
     await flush()
@@ -451,7 +449,7 @@ describe('DeviceCoordinator', () => {
     rejectProbe(new Error('late timeout'))
     await flush()
 
-    expect(device.cancelObservations).not.toHaveBeenCalled()
+    expect(device.iterator.return).not.toHaveBeenCalled()
     expect(coordinator.available).toBe(true)
     expect(vi.getTimerCount()).toBe(1)
     coordinator.shutdown()
