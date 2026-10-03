@@ -196,6 +196,19 @@ export class PhilipsCoapClient {
   }
 
   /**
+   * Re-register every live long-lived Observe using its existing token.
+   *
+   * This is deliberately separate from {@link observe}: callers that never ask
+   * for revalidation retain exactly the existing observation behaviour.
+   * Temporary observations created by {@link getStatus} are not included.
+   */
+  refreshObservations(): number {
+    this.requireOpen()
+    for (const observation of this.observations) observation.refresh()
+    return this.observations.size
+  }
+
+  /**
    * Control writes advance a rolling key, so two concurrent writes (HAP sends Active and
    * RotationSpeed as one PUT, invoking both onSet handlers at once) would emit K+1 and K+2
    * as separate NON datagrams that UDP may reorder — the device then rejects the stale one.
