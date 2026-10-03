@@ -79,19 +79,19 @@ try {
   const before = statusCount
   console.log(`[${stamp()}] Revalidating the existing Observe with the SAME token...`)
   const refreshed = client.refreshObservations()
-  console.log(`[${stamp()}] Refreshed ${refreshed} live observation(s). Waiting 10s for status...`)
+  console.log(`[${stamp()}] Refreshed ${refreshed} live observation(s). Waiting 70s for status...`)
 
-  const refreshDeadline = Date.now() + 10_000
+  const refreshDeadline = Date.now() + 70_000
   while (statusCount === before && Date.now() < refreshDeadline) await sleep(100)
 
   if (statusCount > before) {
-    console.log(`[${stamp()}] SUCCESS: revalidation produced a status without replacing the subscription.`)
+    console.log(`[${stamp()}] SUCCESS: revalidation was followed by a status on the existing subscription.`)
   } else {
-    console.log(`[${stamp()}] RESULT: no status arrived within 10s of same-token revalidation.`)
+    console.log(`[${stamp()}] RESULT: no status arrived within 70s of same-token revalidation.`)
   }
 
   console.log('')
-  console.log('The observation is still running. Change fan power/speed/oscillation physically or in Air+.')
+  console.log('The observation is still running. NOW change fan power/speed/oscillation physically or in Air+.')
   console.log('If another STATUS line appears, the original subscription is still live.')
   console.log('Press Ctrl-C when finished.')
 
