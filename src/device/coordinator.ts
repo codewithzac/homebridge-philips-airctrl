@@ -13,6 +13,11 @@ export interface DeviceCoordinatorOptions {
   initialStatusGraceMs?: number
   /** Target age of a fresh Observe session for one final bootstrap nudge. */
   initialStatusSecondNudgeMs?: number
+  /**
+   * When set, status silence is expected. Refresh Observe and probe the device
+   * after this interval rather than immediately declaring the device unavailable.
+   */
+  statusSilenceProbeMs?: number
 }
 
 export class DeviceCoordinator extends EventEmitter {
@@ -30,6 +35,7 @@ export class DeviceCoordinator extends EventEmitter {
   private clientClosed = false
   private shuttingDown = false
   private forceNextStatus = false
+  private statusEpoch = 0
 
   constructor(
     private client: PhilipsCoapClient,
@@ -87,6 +93,7 @@ export class DeviceCoordinator extends EventEmitter {
   }
 
   ingest(status: DeviceStatus): void {
+    this.statusEpoch += 1
     this.awaitingFreshStatus = false
     this.clearInitialStatusNudge()
     this.armWatchdog()
@@ -218,12 +225,55 @@ export class DeviceCoordinator extends EventEmitter {
   private armWatchdog(): void {
     if (this.shuttingDown) return
     if (this.watchdog) clearTimeout(this.watchdog)
+    const silenceMs = this.options.statusSilenceProbeMs
+    const delayMs = silenceMs ?? this.maxAgeS * 3 * 1000
     this.watchdog = setTimeout(() => {
       this.watchdog = null
       if (this.shuttingDown) return
+      if (silenceMs !== undefined) {
+        void this.checkQuietLiveness(silenceMs)
+        return
+      }
       this.markUnavailable(`no status for ${this.maxAgeS * 3}s`)
       this.scheduleReconnect()
-    }, this.maxAgeS * 3 * 1000)
+    }, delayMs)
+  }
+
+  private async checkQuietLiveness(silenceMs: number): Promise<void> {
+    if (this.shuttingDown) return
+    const epoch = this.statusEpoch
+    this.log.debug(
+      `${this.host} no status for ${Math.round(silenceMs / 1000)}s; refreshing Observe and probing device`,
+    )
+    const startedAt = Date.now()
+
+    try {
+      this.client.refreshObservations()
+      await this.client.getInfo()
+      if (this.shuttingDown || this.statusEpoch !== epoch) return
+      this.log.debug(`${this.host} liveness probe succeeded in ${Date.now() - startedAt}ms`)
+      this.armWatchdog()
+      return
+    } catch (error) {
+      if (this.shuttingDown || this.statusEpoch !== epoch) return
+      this.log.warn(
+        `${this.host} liveness probe failed: ${String(error)}; attempting Observe re-registration`,
+      )
+    }
+
+    try {
+      this.stopObserving()
+      this.client.cancelObservations()
+      this.beginObserving()
+      await this.client.getInfo()
+      if (this.shuttingDown || this.statusEpoch !== epoch) return
+      this.log.info(`${this.host} Observe re-registration recovered liveness`)
+      this.armWatchdog()
+    } catch (error) {
+      if (this.shuttingDown || this.statusEpoch !== epoch) return
+      this.markUnavailable(`liveness probe and Observe re-registration failed: ${String(error)}`)
+      this.scheduleReconnect()
+    }
   }
 
   private beginObserving(): void {
