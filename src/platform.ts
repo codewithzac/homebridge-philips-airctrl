@@ -124,8 +124,11 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
       this.log,
       device.host,
       makeClient,
-      configuredModel?.initialStatusNudge
-        ? { initialStatusNudge: configuredModel.initialStatusNudge }
+      configuredModel && (configuredModel.initialStatusNudge || configuredModel.statusSilenceProbeMs)
+        ? {
+            initialStatusNudge: configuredModel.initialStatusNudge,
+            statusSilenceProbeMs: configuredModel.statusSilenceProbeMs,
+          }
         : undefined,
     )
     this.coordinators.add(coordinator)
