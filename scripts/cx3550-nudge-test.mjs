@@ -18,6 +18,10 @@ const client = new PhilipsCoapClient(host, port, {
 
 const iterator = client.observe()[Symbol.asyncIterator]()
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 function withTimeout(promise, ms) {
   let timer
   return Promise.race([
@@ -33,6 +37,19 @@ function withTimeout(promise, ms) {
 function printStatus(label, status) {
   console.log(label)
   console.dir(status, { depth: null })
+}
+
+async function sendNudge(label) {
+  const started = Date.now()
+  console.log(`${label}: sending D0310A = 1...`)
+  const accepted = await client.setControl({ D0310A: 1 }, {
+    retries: 0,
+    resync: false,
+    timeoutMs: 2000,
+    budgetMs: 2000,
+  })
+  console.log(`${label}: control response: ${accepted ? 'success' : 'failed/rejected'}`)
+  return started
 }
 
 try {
@@ -53,27 +70,17 @@ try {
       pendingStatus = iterator.next()
     }
   } else {
-    console.log('No status arrived within 1.5 s. Sending ONE control write: D0310A = 1...')
-    const started = Date.now()
-
-    const accepted = await client.setControl({ D0310A: 1 }, {
-      retries: 0,
-      resync: false,
-      timeoutMs: 2000,
-      budgetMs: 2000,
-    })
-
-    console.log(`Control response: ${accepted ? 'success' : 'failed/rejected'}`)
-
+    const started = await sendNudge('Initial nudge')
     const result = await withTimeout(pendingStatus, 10000)
+
     if (result?.timeout) {
-      console.log('No Observe status arrived within 10 s of D0310A = 1.')
+      console.log('No Observe status arrived within 10 s of the initial D0310A = 1.')
       process.exitCode = 1
     } else if (result.done) {
       console.log('Observe ended without yielding a status.')
       process.exitCode = 1
     } else {
-      console.log(`Observe status arrived after ${Date.now() - started} ms:`)
+      console.log(`Initial nudge Observe status arrived after ${Date.now() - started} ms:`)
       console.dir(result.value, { depth: null })
       pendingStatus = iterator.next()
     }
@@ -81,15 +88,17 @@ try {
 
   if (process.exitCode !== 1) {
     console.log('')
-    console.log('Monitoring subsequent Observe pushes for 90 s.')
-    console.log('Change something in Air+ now; every status notification will be printed.')
+    console.log('Now open Air+ and wait for a StatusType: status Observe push.')
+    console.log('When one is seen, the script will wait 10 s, send D0310A = 1 again,')
+    console.log('then wait up to 10 s for the resulting Observe status.')
     console.log('Press Ctrl+C to stop early.')
     console.log('')
 
-    const deadline = Date.now() + 90000
+    const deadline = Date.now() + 120000
     let count = 0
+    let sawStatusTypeStatus = false
 
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !sawStatusTypeStatus) {
       const remaining = deadline - Date.now()
       const result = await withTimeout(pendingStatus, remaining)
 
@@ -103,9 +112,33 @@ try {
       count++
       printStatus(`Observe push #${count}:`, result.value)
       pendingStatus = iterator.next()
+
+      if (result.value?.StatusType === 'status') {
+        sawStatusTypeStatus = true
+        console.log('')
+        console.log('Saw StatusType: status. Waiting 10 s before the second nudge...')
+        await sleep(10000)
+
+        const started = await sendNudge('Second nudge')
+        const nudgeResult = await withTimeout(pendingStatus, 10000)
+
+        if (nudgeResult?.timeout) {
+          console.log('No Observe status arrived within 10 s of the second D0310A = 1.')
+          process.exitCode = 1
+        } else if (nudgeResult.done) {
+          console.log('Observe ended without yielding a status after the second nudge.')
+          process.exitCode = 1
+        } else {
+          console.log(`Second nudge Observe status arrived after ${Date.now() - started} ms:`)
+          console.dir(nudgeResult.value, { depth: null })
+        }
+      }
     }
 
-    console.log(`Monitoring complete. Subsequent Observe pushes seen: ${count}`)
+    if (!sawStatusTypeStatus && process.exitCode !== 1) {
+      console.log('No StatusType: status push was seen within 120 s.')
+      process.exitCode = 1
+    }
   }
 } catch (error) {
   console.error('Test failed:', error)
