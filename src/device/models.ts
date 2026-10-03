@@ -28,6 +28,8 @@ export interface DeviceModelConfig {
   ignoreMalformedObservePushes: boolean
   restoreManualAfterPreset: boolean
   naturalSwitch: boolean
+  /** One harmless control write used once per fresh connection to provoke an initial status. */
+  initialStatusNudge?: ControlWrites
 }
 
 function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
@@ -830,6 +832,7 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
     ignoreMalformedObservePushes: true,
     restoreManualAfterPreset: true,
     naturalSwitch: true,
+    initialStatusNudge: { [Gen3Key.MODE_A]: 1 },
     presetModes: {
       speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1 },
       speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2 },
