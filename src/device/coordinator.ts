@@ -11,6 +11,8 @@ export interface DeviceCoordinatorOptions {
    */
   initialStatusNudge?: Record<string, unknown>
   initialStatusGraceMs?: number
+  /** Absolute age of a fresh Observe session at which one final bootstrap nudge is allowed. */
+  initialStatusSecondNudgeMs?: number
 }
 
 export class DeviceCoordinator extends EventEmitter {
@@ -22,6 +24,7 @@ export class DeviceCoordinator extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private initialStatusNudgeTimer: ReturnType<typeof setTimeout> | null = null
   private awaitingFreshStatus = false
+  private initialStatusNudgesSent = 0
   private observeAbort: AbortController | null = null
   private observeIterator: AsyncIterator<DeviceStatus> | null = null
   private clientClosed = false
@@ -156,6 +159,7 @@ export class DeviceCoordinator extends EventEmitter {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.clearInitialStatusNudge()
     this.awaitingFreshStatus = false
+    this.initialStatusNudgesSent = 0
     this.watchdog = null
     this.reconnectTimer = null
     this.stopObserving()
@@ -165,15 +169,15 @@ export class DeviceCoordinator extends EventEmitter {
 
   private beginFreshObservation(): void {
     this.awaitingFreshStatus = true
+    this.initialStatusNudgesSent = 0
     this.beginObserving()
-    this.scheduleInitialStatusNudge()
+    this.scheduleInitialStatusNudge(this.options.initialStatusGraceMs ?? 1_500)
   }
 
-  private scheduleInitialStatusNudge(): void {
+  private scheduleInitialStatusNudge(delay: number): void {
     const values = this.options.initialStatusNudge
-    if (!values || this.shuttingDown) return
+    if (!values || this.shuttingDown || !this.awaitingFreshStatus) return
     this.clearInitialStatusNudge()
-    const delay = this.options.initialStatusGraceMs ?? 1_500
     this.initialStatusNudgeTimer = setTimeout(() => {
       this.initialStatusNudgeTimer = null
       if (this.shuttingDown || !this.awaitingFreshStatus) return
@@ -182,6 +186,8 @@ export class DeviceCoordinator extends EventEmitter {
   }
 
   private async sendInitialStatusNudge(values: Record<string, unknown>): Promise<void> {
+    if (this.initialStatusNudgesSent >= 2) return
+    this.initialStatusNudgesSent += 1
     try {
       const accepted = await this.client.setControl(values, {
         retries: 0,
@@ -193,6 +199,12 @@ export class DeviceCoordinator extends EventEmitter {
     } catch (error) {
       if (!this.shuttingDown) {
         this.log.debug(`${this.host} initial-status nudge failed: ${String(error)}`)
+      }
+    } finally {
+      if (!this.shuttingDown && this.awaitingFreshStatus && this.initialStatusNudgesSent === 1) {
+        const firstAt = this.options.initialStatusGraceMs ?? 1_500
+        const secondAt = this.options.initialStatusSecondNudgeMs ?? 65_000
+        this.scheduleInitialStatusNudge(Math.max(0, secondAt - firstAt))
       }
     }
   }
@@ -300,6 +312,7 @@ export class DeviceCoordinator extends EventEmitter {
     if (this.watchdog) clearTimeout(this.watchdog)
     this.clearInitialStatusNudge()
     this.awaitingFreshStatus = false
+    this.initialStatusNudgesSent = 0
     this.watchdog = null
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
