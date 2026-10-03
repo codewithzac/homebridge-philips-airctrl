@@ -188,11 +188,119 @@ describe('CoapSocket.observe', () => {
     const pushes: string[] = []
     const observation = await socket.observe({ path: '/sys/dev/status', onNotify: m => pushes.push(m.payload.toString()) })
 
-    expect(observation.first.payload.toString()).toBe('first')
-    expect(findOption(observation.first.options, CoapOption.MaxAge)).toBeDefined()
+    expect(observation.first!.payload.toString()).toBe('first')
+    expect(findOption(observation.first!.options, CoapOption.MaxAge)).toBeDefined()
 
     saved!.reply({ code: CONTENT_2_05, messageId: 99, token: saved!.token, payload: Buffer.from('second') })
     await vi.waitFor(() => expect(pushes).toEqual(['second']))
+  })
+
+  it('keeps a quiet Observe subscription alive for a later push', async () => {
+    let saved: { token: Buffer, reply: (m: Parameters<typeof encode>[0]) => void } | null = null
+    device = fakeDevice((request, reply) => {
+      saved = { token: request.token, reply }
+      // CX3550/01 can accept Observe without sending an initial notification.
+    })
+    const port = await device.listen()
+    socket = new CoapSocket('127.0.0.1', port)
+
+    const pushes: string[] = []
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: message => pushes.push(message.payload.toString()),
+      timeoutMs: 20,
+      allowQuiet: true,
+    })
+
+    expect(observation.first).toBeUndefined()
+    expect(socket.pendingCount).toBe(1)
+
+    saved!.reply({
+      code: CONTENT_2_05,
+      messageId: 99,
+      token: saved!.token,
+      payload: Buffer.from('later'),
+    })
+    await vi.waitFor(() => expect(pushes).toEqual(['later']))
+
+    observation.cancel()
+    expect(socket.pendingCount).toBe(0)
+  })
+
+  it('refreshes an observation with Observe=0 on the same token without replacing it', async () => {
+    const requests: ReturnType<typeof decode>[] = []
+    let push: ((m: Parameters<typeof encode>[0]) => void) | undefined
+    device = fakeDevice((request, reply) => {
+      requests.push(request)
+      push = reply
+      if (requests.length === 1) {
+        reply({
+          code: CONTENT_2_05,
+          messageId: request.messageId,
+          token: request.token,
+          payload: Buffer.from('first'),
+        })
+      }
+    })
+    const port = await device.listen()
+    socket = new CoapSocket('127.0.0.1', port)
+
+    const pushes: string[] = []
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: message => pushes.push(message.payload.toString()),
+    })
+    const token = requests[0]!.token
+
+    observation.refresh()
+    await vi.waitFor(() => expect(requests).toHaveLength(2))
+
+    expect(findOption(requests[1]!.options, CoapOption.Observe)!.value.toString('hex')).toBe('')
+    expect(requests[1]!.token.equals(token)).toBe(true)
+    expect(socket.pendingCount).toBe(1)
+
+    push!({
+      code: CONTENT_2_05,
+      messageId: 99,
+      token,
+      payload: Buffer.from('refreshed'),
+    })
+    await vi.waitFor(() => expect(pushes).toEqual(['refreshed']))
+
+    observation.cancel()
+  })
+
+  it('does not fail a live observation when a best-effort refresh send fails', async () => {
+    device = fakeDevice((request, reply) => {
+      reply({
+        code: CONTENT_2_05,
+        messageId: request.messageId,
+        token: request.token,
+        payload: Buffer.from('first'),
+      })
+    })
+    const port = await device.listen()
+    socket = new CoapSocket('127.0.0.1', port)
+
+    const errors: Error[] = []
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: () => {},
+      onError: error => errors.push(error),
+    })
+
+    const underlying = (socket as unknown as { socket: { send: (...args: unknown[]) => void } }).socket
+    underlying.send = (...args) => {
+      const callback = args.at(-1)
+      if (typeof callback === 'function') callback(new Error('refresh send failure'))
+    }
+
+    observation.refresh()
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(errors).toEqual([])
+    expect(socket.pendingCount).toBe(1)
+    observation.cancel()
   })
 
   it('cancel() sends the same token with Observe=1 and stops notifications', async () => {
@@ -215,7 +323,7 @@ describe('CoapSocket.observe', () => {
 
     // The cancellation carries the same token and Observe = 1.
     const cancellation = requests.at(-1)!
-    expect(cancellation.token.toString('hex')).toBe(observation.first.token.toString('hex'))
+    expect(cancellation.token.toString('hex')).toBe(observation.first!.token.toString('hex'))
     expect(findOption(cancellation.options, CoapOption.Observe)!.value.toString('hex')).toBe('01')
 
     // A push arriving after cancellation must be dropped.
@@ -276,7 +384,7 @@ describe('CoapSocket.observe', () => {
       onNotify: () => {},
       onError: error => errors.push(error),
     })
-    expect(observation.first.payload.toString()).toBe('first')
+    expect(observation.first!.payload.toString()).toBe('first')
 
     // The underlying dgram socket is a private implementation detail; poke its
     // 'error' event directly rather than trying to provoke a real network error.

@@ -128,7 +128,7 @@
       return
     }
 
-    const cards = devices.map(device => {
+    const cards = await Promise.all(devices.map(async device => {
       const card = textElement('div', 'pa-card', '')
       const heading = textElement('div', 'pa-row pa-spread', '')
       const remove = textElement('button', 'btn btn-sm btn-danger', 'Remove')
@@ -147,15 +147,33 @@
 
       const detail = [device.host, device.model].filter(Boolean).join(' · ')
       const grid = textElement('div', 'pa-grid mt-2', '')
-      grid.append(
+      const controls = [
         toggle(device.host, 'exposeLight', 'Display light', device.exposeLight !== false),
         toggle(device.host, 'exposeSleepSwitch', 'Sleep switch', !!device.exposeSleepSwitch),
+      ]
+      try {
+        const capabilities = await homebridge.request('/capabilities', { model: device.model })
+        if (capabilities?.naturalSwitch) {
+          controls.push(
+            toggle(
+              device.host,
+              'exposeNaturalSwitch',
+              'Natural Breeze switch',
+              !!device.exposeNaturalSwitch,
+            ),
+          )
+        }
+      } catch {
+        // Capability lookup is advisory; keep the rest of the config UI usable.
+      }
+      controls.push(
         toggle(device.host, 'exposeAutoPlusSwitch', 'Auto+ AI switch', !!device.exposeAutoPlusSwitch),
         toggle(device.host, 'exposeBeepSwitch', 'Beep switch', !!device.exposeBeepSwitch),
       )
+      grid.append(...controls)
       card.append(heading, textElement('div', 'pa-muted', detail), grid)
       return card
-    })
+    }))
     configuredEl.replaceChildren(...cards)
   }
 
