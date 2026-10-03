@@ -227,6 +227,49 @@ describe('CoapSocket.observe', () => {
     expect(socket.pendingCount).toBe(0)
   })
 
+  it('refreshes an observation with Observe=0 on the same token without replacing it', async () => {
+    const requests: ReturnType<typeof decode>[] = []
+    let push: ((m: Parameters<typeof encode>[0]) => void) | undefined
+    device = fakeDevice((request, reply) => {
+      requests.push(request)
+      push = reply
+      if (requests.length === 1) {
+        reply({
+          code: CONTENT_2_05,
+          messageId: request.messageId,
+          token: request.token,
+          payload: Buffer.from('first'),
+        })
+      }
+    })
+    const port = await device.listen()
+    socket = new CoapSocket('127.0.0.1', port)
+
+    const pushes: string[] = []
+    const observation = await socket.observe({
+      path: '/sys/dev/status',
+      onNotify: message => pushes.push(message.payload.toString()),
+    })
+    const token = requests[0]!.token
+
+    observation.refresh()
+    await vi.waitFor(() => expect(requests).toHaveLength(2))
+
+    expect(findOption(requests[1]!.options, CoapOption.Observe)!.value.toString('hex')).toBe('')
+    expect(requests[1]!.token.equals(token)).toBe(true)
+    expect(socket.pendingCount).toBe(1)
+
+    push!({
+      code: CONTENT_2_05,
+      messageId: 99,
+      token,
+      payload: Buffer.from('refreshed'),
+    })
+    await vi.waitFor(() => expect(pushes).toEqual(['refreshed']))
+
+    observation.cancel()
+  })
+
   it('cancel() sends the same token with Observe=1 and stops notifications', async () => {
     const requests: ReturnType<typeof decode>[] = []
     let saved: { token: Buffer, reply: (m: Parameters<typeof encode>[0]) => void } | null = null
