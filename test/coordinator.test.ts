@@ -30,42 +30,68 @@ function client(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
 
 function controlledClient(status: Record<string, unknown> = { pwr: '1' }, maxAge = 20) {
   const instance = client(status, maxAge)
-  let resolveNext: ((result: IteratorResult<Record<string, unknown>>) => void) | undefined
-  let rejectNext: ((error: Error) => void) | undefined
-  const iterator = {
-    next: vi.fn(() => new Promise<IteratorResult<Record<string, unknown>>>((resolve, reject) => {
-      resolveNext = resolve
-      rejectNext = reject
-    })),
-    return: vi.fn(async () => {
-      resolveNext?.({ done: true, value: undefined })
-      resolveNext = undefined
-      rejectNext = undefined
-      return { done: true as const, value: undefined }
-    }),
-    [Symbol.asyncIterator]() {
-      return this
-    },
+  const iterators: Array<{
+    next: ReturnType<typeof vi.fn>
+    return: ReturnType<typeof vi.fn>
+    resolveNext?: (result: IteratorResult<Record<string, unknown>>) => void
+    rejectNext?: (error: Error) => void
+    [Symbol.asyncIterator](): unknown
+  }> = []
+
+  const makeIterator = () => {
+    const iterator = {
+      resolveNext: undefined as ((result: IteratorResult<Record<string, unknown>>) => void) | undefined,
+      rejectNext: undefined as ((error: Error) => void) | undefined,
+      next: vi.fn(() => new Promise<IteratorResult<Record<string, unknown>>>((resolve, reject) => {
+        iterator.resolveNext = resolve
+        iterator.rejectNext = reject
+      })),
+      return: vi.fn(async () => {
+        iterator.resolveNext?.({ done: true, value: undefined })
+        iterator.resolveNext = undefined
+        iterator.rejectNext = undefined
+        return { done: true as const, value: undefined }
+      }),
+      [Symbol.asyncIterator]() {
+        return this
+      },
+    }
+    iterators.push(iterator)
+    return iterator
   }
-  instance.observe = vi.fn(() => iterator) as unknown as typeof instance.observe
-  return Object.assign(instance, {
-    iterator,
+
+  instance.observe = vi.fn(() => makeIterator()) as unknown as typeof instance.observe
+  const controlled = Object.assign(instance, {
+    iterators,
     push(value: Record<string, unknown>) {
-      resolveNext?.({ done: false, value })
-      resolveNext = undefined
-      rejectNext = undefined
+      const iterator = iterators.at(-1)
+      iterator?.resolveNext?.({ done: false, value })
+      if (iterator) {
+        iterator.resolveNext = undefined
+        iterator.rejectNext = undefined
+      }
     },
     fail(error: Error) {
-      rejectNext?.(error)
-      resolveNext = undefined
-      rejectNext = undefined
+      const iterator = iterators.at(-1)
+      iterator?.rejectNext?.(error)
+      if (iterator) {
+        iterator.resolveNext = undefined
+        iterator.rejectNext = undefined
+      }
     },
     finish() {
-      resolveNext?.({ done: true, value: undefined })
-      resolveNext = undefined
-      rejectNext = undefined
+      const iterator = iterators.at(-1)
+      iterator?.resolveNext?.({ done: true, value: undefined })
+      if (iterator) {
+        iterator.resolveNext = undefined
+        iterator.rejectNext = undefined
+      }
     },
   })
+  Object.defineProperty(controlled, 'iterator', {
+    get: () => iterators.at(-1),
+  })
+  return controlled as typeof controlled & { iterator: (typeof iterators)[number] }
 }
 
 async function flush(): Promise<void> {
@@ -374,7 +400,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.iterator.return).toHaveBeenCalled()
+    expect(device.iterators[0]?.return).toHaveBeenCalled()
     expect(device.observe).toHaveBeenCalledTimes(2)
     expect(device.getInfo).toHaveBeenCalledTimes(2)
     expect(coordinator.available).toBe(true)
@@ -410,7 +436,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(coordinator.available).toBe(false)
-    expect(device.iterator.return).toHaveBeenCalled()
+    expect(device.iterators[0]?.return).toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(5_000)
     await flush()
@@ -449,7 +475,7 @@ describe('DeviceCoordinator', () => {
     rejectProbe(new Error('late timeout'))
     await flush()
 
-    expect(device.iterator.return).not.toHaveBeenCalled()
+    expect(device.iterators[0]?.return).not.toHaveBeenCalled()
     expect(coordinator.available).toBe(true)
     expect(vi.getTimerCount()).toBe(1)
     coordinator.shutdown()
