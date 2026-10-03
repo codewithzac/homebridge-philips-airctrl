@@ -18,10 +18,6 @@ const client = new PhilipsCoapClient(host, port, {
 
 const iterator = client.observe()[Symbol.asyncIterator]()
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 function withTimeout(promise, ms) {
   let timer
   return Promise.race([
@@ -88,9 +84,9 @@ try {
 
   if (process.exitCode !== 1) {
     console.log('')
-    console.log('Now open Air+ and wait for a StatusType: status Observe push.')
-    console.log('When one is seen, the script will wait 10 s, send D0310A = 1 again,')
-    console.log('then wait up to 10 s for the resulting Observe status.')
+    console.log('Now trigger a StatusType: status push (Air+ or a physical control change).')
+    console.log('After one is seen, the script will keep consuming/printing Observe packets for 10 s,')
+    console.log('then send D0310A = 1 again and wait up to 10 s for a genuinely later push.')
     console.log('Press Ctrl+C to stop early.')
     console.log('')
 
@@ -116,21 +112,40 @@ try {
       if (result.value?.StatusType === 'status') {
         sawStatusTypeStatus = true
         console.log('')
-        console.log('Saw StatusType: status. Waiting 10 s before the second nudge...')
-        await sleep(10000)
+        console.log('Saw StatusType: status. Draining/printing any further Observe traffic for 10 s...')
 
-        const started = await sendNudge('Second nudge')
-        const nudgeResult = await withTimeout(pendingStatus, 10000)
+        const drainDeadline = Date.now() + 10000
+        while (Date.now() < drainDeadline) {
+          const remainingDrain = drainDeadline - Date.now()
+          const drainResult = await withTimeout(pendingStatus, remainingDrain)
 
-        if (nudgeResult?.timeout) {
-          console.log('No Observe status arrived within 10 s of the second D0310A = 1.')
-          process.exitCode = 1
-        } else if (nudgeResult.done) {
-          console.log('Observe ended without yielding a status after the second nudge.')
-          process.exitCode = 1
-        } else {
-          console.log(`Second nudge Observe status arrived after ${Date.now() - started} ms:`)
-          console.dir(nudgeResult.value, { depth: null })
+          if (drainResult?.timeout) break
+          if (drainResult.done) {
+            console.log('Observe ended during the 10 s drain window.')
+            process.exitCode = 1
+            break
+          }
+
+          count++
+          printStatus(`Observe push #${count} (during 10 s drain):`, drainResult.value)
+          pendingStatus = iterator.next()
+        }
+
+        if (process.exitCode !== 1) {
+          console.log('Drain window complete. Sending the second nudge now...')
+          const started = await sendNudge('Second nudge')
+          const nudgeResult = await withTimeout(pendingStatus, 10000)
+
+          if (nudgeResult?.timeout) {
+            console.log('No Observe status arrived within 10 s of the second D0310A = 1.')
+            process.exitCode = 1
+          } else if (nudgeResult.done) {
+            console.log('Observe ended without yielding a status after the second nudge.')
+            process.exitCode = 1
+          } else {
+            console.log(`Second nudge Observe status arrived after ${Date.now() - started} ms:`)
+            console.dir(nudgeResult.value, { depth: null })
+          }
         }
       }
     }
