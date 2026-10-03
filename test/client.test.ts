@@ -442,7 +442,7 @@ describe('PhilipsCoapClient', () => {
       () => client.connect(),
       () => client.getStatus(),
       () => client.observe().next(),
-      () => Promise.resolve(client.refreshObservations()),
+      async () => client.refreshObservations(),
       () => client.setControl({ D03102: 1 }),
     ]
     for (const operation of operations) {
