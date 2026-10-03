@@ -25,6 +25,13 @@ declare module '*/homebridge-ui/server.js' {
     hostsInSubnet: (cidr: string) => Generator<string>
     localSubnets: () => string[]
   }
+  export interface CapabilitiesDependencies {
+    findModel: (model: string) => { naturalSwitch?: boolean } | undefined
+  }
+  export function capabilitiesRequest(
+    payload?: { model?: string },
+    dependencies?: CapabilitiesDependencies,
+  ): Promise<{ naturalSwitch: boolean }>
   export function probeRequest(
     payload?: { host?: string, port?: unknown },
     dependencies?: ProbeDependencies,
@@ -45,6 +52,7 @@ declare module '*/homebridge-ui/public/config-ops.js' {
   export interface DeviceConfigBlock extends DeviceInput {
     exposeLight?: boolean
     exposeSleepSwitch?: boolean
+    exposeNaturalSwitch?: boolean
     exposeAutoPlusSwitch?: boolean
     exposeBeepSwitch?: boolean
     [key: string]: unknown

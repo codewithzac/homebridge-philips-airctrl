@@ -18,9 +18,10 @@ describe('PhilipsCoapClient', () => {
 
   async function start(
     handler: Parameters<typeof startFakeDevice>[0],
+    options?: ConstructorParameters<typeof PhilipsCoapClient>[2],
   ): Promise<{ device: FakeDevice, client: PhilipsCoapClient }> {
     const device = await startFakeDevice(handler)
-    const client = new PhilipsCoapClient('127.0.0.1', device.port)
+    const client = new PhilipsCoapClient('127.0.0.1', device.port, options)
     devices.push(device)
     clients.push(client)
     return { device, client }
@@ -145,7 +146,69 @@ describe('PhilipsCoapClient', () => {
     )).length === 1)
   })
 
-  it('rejects a waiting iterator on a malformed push and cancels it', async () => {
+  it('waits for a later push when the initial Observe notification is quiet', async () => {
+    const { client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+    })
+    await client.connect()
+
+    const socket = (client as unknown as { socket: CoapSocket }).socket
+    let notify!: (message: DecodedCoapMessage) => void
+    const cancel = vi.fn()
+    vi.spyOn(socket, 'observe').mockImplementation(async options => {
+      notify = options.onNotify
+      return { first: undefined, cancel }
+    })
+
+    const iterator = client.observe()
+    const next = iterator.next()
+    await Promise.resolve()
+
+    notify({
+      type: 1,
+      code: 69,
+      messageId: 2,
+      token: Buffer.from('01020304', 'hex'),
+      options: [],
+      payload: Buffer.from(encrypt(
+        '0DC377BA',
+        JSON.stringify({ state: { reported: { D03102: 1 } } }),
+      )),
+    })
+
+    await expect(next).resolves.toEqual({ done: false, value: { D03102: 1 } })
+    await iterator.return(undefined)
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it('ignores a malformed observe push only when explicitly enabled', async () => {
+    const { device, client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (pathOf(request) === '/sys/dev/status') {
+        return {
+          payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: {} } })),
+        }
+      }
+    }, { ignoreMalformedObservePushes: true })
+    await client.connect()
+    const iterator = client.observe()
+    await iterator.next()
+
+    const next = iterator.next()
+    await device.push('invalid encrypted payload')
+    await device.push(encrypt(
+      '0DC377BA',
+      JSON.stringify({ state: { reported: { D03102: 1 } } }),
+    ))
+
+    await expect(next).resolves.toEqual({ done: false, value: { D03102: 1 } })
+    expect(device.requests.some(request => observeValue(request) === 1)).toBe(false)
+
+    await iterator.return(undefined)
+    await waitFor(() => device.requests.some(request => observeValue(request) === 1))
+  })
+
+  it('preserves the default behavior of rejecting malformed observe pushes', async () => {
     const { device, client } = await start(request => {
       if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
       if (pathOf(request) === '/sys/dev/status') {

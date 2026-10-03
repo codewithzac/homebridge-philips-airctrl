@@ -1,6 +1,6 @@
 import type { Logging } from 'homebridge'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { PhilipsCoapClient } from '../src/airctrl/client.js'
+import { NoInitialStatusError, type PhilipsCoapClient } from '../src/airctrl/client.js'
 import { DeviceCoordinator } from '../src/device/coordinator.js'
 
 function logging() {
@@ -98,6 +98,126 @@ describe('DeviceCoordinator', () => {
     coordinator.shutdown()
   })
 
+  it('sends at most two bootstrap nudges when a fresh Observe remains quiet', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    const coordinator = new DeviceCoordinator(
+      device,
+      logging(),
+      '192.0.2.1',
+      undefined,
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
+    )
+
+    await coordinator.start()
+    await flush()
+
+    expect(device.getStatus).not.toHaveBeenCalled()
+    expect(device.observe).toHaveBeenCalledOnce()
+    expect(device.setControl).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1_499)
+    expect(device.setControl).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(device.setControl).toHaveBeenCalledOnce()
+    expect(device.setControl).toHaveBeenLastCalledWith(
+      { D0310A: 1 },
+      { retries: 0, resync: false, timeoutMs: 2_000, budgetMs: 2_000 },
+    )
+
+    await vi.advanceTimersByTimeAsync(63_499)
+    expect(device.setControl).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(1)
+    await flush()
+    expect(device.setControl).toHaveBeenCalledTimes(2)
+    expect(device.setControl).toHaveBeenLastCalledWith(
+      { D0310A: 1 },
+      { retries: 0, resync: false, timeoutMs: 2_000, budgetMs: 2_000 },
+    )
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(device.setControl).toHaveBeenCalledTimes(2)
+    expect(coordinator.status).toBeNull()
+    coordinator.shutdown()
+  })
+
+  it('cancels the delayed fallback nudge as soon as the first nudge gets a status', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    const coordinator = new DeviceCoordinator(
+      device,
+      logging(),
+      '192.0.2.1',
+      undefined,
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
+    )
+
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    await flush()
+    expect(device.setControl).toHaveBeenCalledOnce()
+
+    device.push({ D03102: 1, D0310A: 1, D0310C: 2 })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(device.setControl).toHaveBeenCalledOnce()
+    coordinator.shutdown()
+  })
+
+  it('cancels the startup nudge when a quiet device reports during the grace period', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    const coordinator = new DeviceCoordinator(
+      device,
+      logging(),
+      '192.0.2.1',
+      undefined,
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
+    )
+
+    await coordinator.start()
+    await flush()
+    device.push({ D03102: 1, D0310A: 1, D0310C: 2 })
+    await flush()
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(device.setControl).not.toHaveBeenCalled()
+    expect(coordinator.status).toEqual({ D03102: 1, D0310A: 1, D0310C: 2 })
+    coordinator.shutdown()
+  })
+
+  it('keeps a quiet device available and accepts its first later status push', async () => {
+    vi.useFakeTimers()
+    const device = controlledClient()
+    device.getStatus.mockRejectedValue(new NoInitialStatusError())
+    const log = logging()
+    const coordinator = new DeviceCoordinator(device, log, '192.0.2.1')
+    const statuses: Record<string, unknown>[] = []
+
+    coordinator.on('status', status => statuses.push(status))
+
+    await coordinator.start()
+    await flush()
+
+    expect(coordinator.available).toBe(true)
+    expect(coordinator.status).toBeNull()
+    expect(device.observe).toHaveBeenCalledOnce()
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining('waiting for initial status'))
+
+    device.push({ pwr: '1', D0310C: 2 })
+    await flush()
+
+    expect(coordinator.status).toEqual({ pwr: '1', D0310C: 2 })
+    expect(statuses).toEqual([{ pwr: '1', D0310C: 2 }])
+    expect(vi.getTimerCount()).toBe(1)
+
+    coordinator.shutdown()
+  })
+
   it('emits only added, removed, or strictly changed status keys', () => {
     vi.useFakeTimers()
     const coordinator = new DeviceCoordinator(client(), logging(), '192.0.2.1')
@@ -188,6 +308,54 @@ describe('DeviceCoordinator', () => {
     expect(log.info).toHaveBeenCalledWith(expect.stringContaining('Reconnected'))
     expect(log.info).toHaveBeenCalledTimes(2)
     expect(coordinator.nextBackoffMs()).toBe(5_000)
+    coordinator.shutdown()
+  })
+
+  it('uses the same bounded bootstrap after watchdog reconnect for a quiet device', async () => {
+    vi.useFakeTimers()
+    const first = controlledClient()
+    const replacement = controlledClient()
+    const reconnectClient = vi.fn().mockResolvedValue(replacement)
+    const coordinator = new DeviceCoordinator(
+      first,
+      logging(),
+      '192.0.2.1',
+      reconnectClient,
+      { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500, initialStatusSecondNudgeMs: 65_000 },
+    )
+
+    await coordinator.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    await flush()
+    first.push({ D03102: 1, D0310A: 1, D0310C: 2 })
+    await flush()
+
+    // The first real status arms the watchdog at the default 60s * 3.
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(coordinator.available).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await flush()
+
+    expect(first.close).toHaveBeenCalledOnce()
+    expect(reconnectClient).toHaveBeenCalledOnce()
+    expect(replacement.connect).toHaveBeenCalledOnce()
+    expect(replacement.getStatus).not.toHaveBeenCalled()
+    expect(replacement.observe).toHaveBeenCalledOnce()
+    expect(replacement.setControl).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1_500)
+    await flush()
+    expect(replacement.setControl).toHaveBeenCalledOnce()
+    expect(replacement.setControl).toHaveBeenCalledWith(
+      { D0310A: 1 },
+      { retries: 0, resync: false, timeoutMs: 2_000, budgetMs: 2_000 },
+    )
+
+    replacement.push({ D03102: 0, D0310A: 1, D0310C: 2 })
+    await flush()
+    expect(coordinator.status).toEqual({ D03102: 0, D0310A: 1, D0310C: 2 })
+    expect(coordinator.available).toBe(true)
     coordinator.shutdown()
   })
 

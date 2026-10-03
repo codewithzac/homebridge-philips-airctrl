@@ -30,10 +30,16 @@ export interface ObserveOptions {
   onNotify: (message: DecodedCoapMessage) => void
   onError?: (error: Error) => void
   timeoutMs?: number
+  /**
+   * Some Philips firmware accepts an Observe registration but sends no initial
+   * notification. When true, initial silence resolves as a live observation
+   * instead of tearing the subscription down.
+   */
+  allowQuiet?: boolean
 }
 
 export interface Observation {
-  first: DecodedCoapMessage
+  first?: DecodedCoapMessage
   /** Proactively deregister: same token, Observe = 1. */
   cancel: () => void
 }
@@ -173,19 +179,25 @@ export class CoapSocket {
 
   /** Register an observation. `onNotify` fires for every push after the first. */
   async observe(options: ObserveOptions): Promise<Observation> {
-    const { path, onNotify, onError, timeoutMs = DEFAULT_TIMEOUT_MS } = options
+    const { path, onNotify, onError, timeoutMs = DEFAULT_TIMEOUT_MS, allowQuiet = false } = options
     const token = randomBytes(4)
     const key = token.toString('hex')
 
-    const first = await new Promise<DecodedCoapMessage>((resolve, reject) => {
+    const first = await new Promise<DecodedCoapMessage | undefined>((resolve, reject) => {
+      let settled = false
       const timer = setTimeout(() => {
-        this.handlers.delete(key)
         this.pending.delete(key)
+        if (allowQuiet) {
+          settled = true
+          if (onError) this.observers.set(key, onError)
+          resolve(undefined)
+          return
+        }
+        this.handlers.delete(key)
         reject(new Error(`CoAP observe timeout after ${timeoutMs}ms for ${path}`))
       }, timeoutMs)
       this.pending.set(key, { timer, reject })
 
-      let settled = false
       this.handlers.set(key, message => {
         if (!settled) {
           settled = true

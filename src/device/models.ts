@@ -22,6 +22,14 @@ export interface DeviceModelConfig {
   unavailableFilters: string[]
   unavailableSensors: string[]
   createFan: boolean
+  serviceType: 'purifier' | 'fan'
+  oscillation?: { key: string, on: string | number, off: string | number }
+  quietObserve: boolean
+  ignoreMalformedObservePushes: boolean
+  restoreManualAfterPreset: boolean
+  naturalSwitch: boolean
+  /** Model-specific control used to provoke an initial status when a fresh Observe remains quiet. */
+  initialStatusNudge?: ControlWrites
 }
 
 function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
@@ -35,6 +43,11 @@ function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGenera
     unavailableFilters: [],
     unavailableSensors: [],
     createFan: true,
+    serviceType: 'purifier',
+    quietObserve: false,
+    ignoreMalformedObservePushes: false,
+    restoreManualAfterPreset: false,
+    naturalSwitch: false,
     ...partial,
   }
 }
@@ -805,19 +818,32 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
   }),
 
   // --- CX3550 ---
+  // Hardware-verified quirks:
+  // - /sys/dev/status Observe may be initially quiet.
+  // - malformed same-token Observe packets can occur and should be ignored.
+  // - oscillation writes ON as 17242, while status reports a different non-zero value
+  //   (23040 observed); consumers therefore treat any non-zero report as enabled.
+  // - Sleep/Natural are distinct MODE_B presets and return to the last manual speed.
   CX3550: config({
     apiGeneration: ApiGeneration.Gen3,
+    serviceType: 'fan',
+    oscillation: { key: Gen3Key.OSCILLATION, on: 17242, off: 0 },
+    quietObserve: true,
+    ignoreMalformedObservePushes: true,
+    restoreManualAfterPreset: true,
+    naturalSwitch: true,
+    initialStatusNudge: { [Gen3Key.MODE_A]: 1 },
     presetModes: {
-      speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1, [Gen3Key.MODE_C]: 1 },
-      speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2, [Gen3Key.MODE_C]: 2 },
-      speed_3: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 3, [Gen3Key.MODE_C]: 3 },
-      natural: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: -126, [Gen3Key.MODE_C]: 1 },
-      sleep: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 17, [Gen3Key.MODE_C]: 2 },
+      speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1 },
+      speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2 },
+      speed_3: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 3 },
+      natural: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: -126 },
+      sleep: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 17 },
     },
     speeds: {
-      speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1, [Gen3Key.MODE_C]: 1 },
-      speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2, [Gen3Key.MODE_C]: 2 },
-      speed_3: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 3, [Gen3Key.MODE_C]: 3 },
+      speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1 },
+      speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2 },
+      speed_3: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 3 },
     },
     switches: [Gen3Key.BEEP],
     selects: [`${Gen3Key.TIMER}#2`],

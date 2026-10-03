@@ -53,6 +53,43 @@ describe('resolveModel', () => {
     expect(resolveModel('AC0850/81')).toBe(DEVICE_MODELS['AC0850/81'])
   })
 
+  it('scopes CX3550 transport and preset quirks to that model', () => {
+    const cx3550 = resolveModel('CX3550/01')
+    expect(cx3550).toMatchObject({
+      serviceType: 'fan',
+      quietObserve: true,
+      ignoreMalformedObservePushes: true,
+      restoreManualAfterPreset: true,
+      naturalSwitch: true,
+      initialStatusNudge: { D0310A: 1 },
+      oscillation: { key: 'D0320F', on: 17242, off: 0 },
+    })
+
+    const purifier = resolveModel('AC4220/12')
+    expect(purifier).toMatchObject({
+      serviceType: 'purifier',
+      quietObserve: false,
+      ignoreMalformedObservePushes: false,
+      restoreManualAfterPreset: false,
+      naturalSwitch: false,
+    })
+    expect(purifier.initialStatusNudge).toBeUndefined()
+  })
+
+  it('keeps all non-CX3550 registry models on the existing default behavior', () => {
+    for (const [name, model] of Object.entries(DEVICE_MODELS)) {
+      if (name === 'CX3550') continue
+
+      expect(model.serviceType).toBe('purifier')
+      expect(model.quietObserve).toBe(false)
+      expect(model.ignoreMalformedObservePushes).toBe(false)
+      expect(model.restoreManualAfterPreset).toBe(false)
+      expect(model.naturalSwitch).toBe(false)
+      expect(model.initialStatusNudge).toBeUndefined()
+      expect(model.oscillation).toBeUndefined()
+    }
+  })
+
   it('falls back to a generic config for an unknown model', () => {
     const config = resolveModel('XX9999/99', ApiGeneration.Gen3)
     expect(config.apiGeneration).toBe(ApiGeneration.Gen3)
