@@ -262,8 +262,9 @@ export class DeviceCoordinator extends EventEmitter {
     }
 
     try {
-      this.stopObserving()
-      this.client.cancelObservations()
+      // beginObserving() first ends the current iterator via return(), whose
+      // normal generator cleanup deregisters the old Observe without treating
+      // the intentional reset as a transport failure.
       this.beginObserving()
       await this.client.getInfo()
       if (this.shuttingDown || this.statusEpoch !== epoch) return
