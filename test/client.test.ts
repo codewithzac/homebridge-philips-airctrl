@@ -154,10 +154,11 @@ describe('PhilipsCoapClient', () => {
 
     const socket = (client as unknown as { socket: CoapSocket }).socket
     let notify!: (message: DecodedCoapMessage) => void
+    const refresh = vi.fn()
     const cancel = vi.fn()
     vi.spyOn(socket, 'observe').mockImplementation(async options => {
       notify = options.onNotify
-      return { first: undefined, cancel }
+      return { first: undefined, refresh, cancel }
     })
 
     const iterator = client.observe()
@@ -225,6 +226,48 @@ describe('PhilipsCoapClient', () => {
     await device.push('invalid encrypted payload')
     await expect(next).rejects.toThrow()
     await waitFor(() => device.requests.some(request => observeValue(request) === 1))
+  })
+
+  it('refreshes only live long-lived observations without changing observe()', async () => {
+    const { device, client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (pathOf(request) === '/sys/dev/status') {
+        return {
+          payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: { D03102: 0 } } })),
+        }
+      }
+    })
+    await client.connect()
+
+    // A temporary getStatus observation must not be retained for later refresh.
+    await client.getStatus()
+    await waitFor(() => device.requests.filter(request => (
+      pathOf(request) === '/sys/dev/status' && observeValue(request) === 1
+    )).length === 1)
+
+    const first = client.observe()
+    const second = client.observe()
+    await Promise.all([first.next(), second.next()])
+
+    const before = device.requests.filter(request => (
+      pathOf(request) === '/sys/dev/status' && observeValue(request) === 0
+    ))
+    expect(before).toHaveLength(3)
+
+    expect(client.refreshObservations()).toBe(2)
+    await waitFor(() => device.requests.filter(request => (
+      pathOf(request) === '/sys/dev/status' && observeValue(request) === 0
+    )).length === 5)
+
+    const after = device.requests.filter(request => (
+      pathOf(request) === '/sys/dev/status' && observeValue(request) === 0
+    ))
+    const longLivedTokens = before.slice(1).map(request => request.token.toString('hex')).sort()
+    const refreshTokens = after.slice(3).map(request => request.token.toString('hex')).sort()
+    expect(refreshTokens).toEqual(longLivedTokens)
+
+    await first.return(undefined)
+    await second.return(undefined)
   })
 
   it('sends an encrypted control payload and returns true for success', async () => {
@@ -399,6 +442,7 @@ describe('PhilipsCoapClient', () => {
       () => client.connect(),
       () => client.getStatus(),
       () => client.observe().next(),
+      () => Promise.resolve(client.refreshObservations()),
       () => client.setControl({ D03102: 1 }),
     ]
     for (const operation of operations) {
@@ -447,6 +491,7 @@ describe('PhilipsCoapClient', () => {
             JSON.stringify({ state: { reported: { D03102: 1 } } }),
           )),
         },
+        refresh: vi.fn(),
         cancel,
       })
 
