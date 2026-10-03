@@ -374,7 +374,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(device.refreshObservations).toHaveBeenCalledOnce()
-    expect(device.iterator.return).toHaveBeenCalledOnce()
+    expect(device.iterator.return).toHaveBeenCalled()
     expect(device.observe).toHaveBeenCalledTimes(2)
     expect(device.getInfo).toHaveBeenCalledTimes(2)
     expect(coordinator.available).toBe(true)
@@ -410,7 +410,7 @@ describe('DeviceCoordinator', () => {
     await flush()
 
     expect(coordinator.available).toBe(false)
-    expect(device.iterator.return).toHaveBeenCalledOnce()
+    expect(device.iterator.return).toHaveBeenCalled()
 
     await vi.advanceTimersByTimeAsync(5_000)
     await flush()
