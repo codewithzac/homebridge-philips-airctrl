@@ -209,6 +209,24 @@ export class PhilipsCoapClient {
   }
 
   /**
+   * End every live long-lived Observe without closing the client/socket.
+   *
+   * Used only when a model-specific liveness check needs a fresh registration.
+   * Waking each generator lets its normal finally block settle instead of leaving
+   * an abandoned iterator waiting forever.
+   */
+  cancelObservations(): number {
+    this.requireOpen()
+    const observations = [...this.observations]
+    for (const observation of observations) {
+      this.observationFailures.get(observation)?.(new Error('observation reset'))
+      this.observationFailures.delete(observation)
+      if (this.observations.delete(observation)) observation.cancel()
+    }
+    return observations.length
+  }
+
+  /**
    * Control writes advance a rolling key, so two concurrent writes (HAP sends Active and
    * RotationSpeed as one PUT, invoking both onSet handlers at once) would emit K+1 and K+2
    * as separate NON datagrams that UDP may reorder — the device then rejects the stale one.
