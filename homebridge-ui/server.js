@@ -4,6 +4,7 @@ import { HomebridgePluginUiServer, RequestError } from '@homebridge/plugin-ui-ut
 
 const requestError = message => new RequestError(message, {})
 const loadDiscovery = () => import('../dist/airctrl/discovery.js')
+const loadModels = () => import('../dist/device/models.js')
 
 export async function scanRequest(payload = {}, dependencies) {
   let discovery
@@ -50,6 +51,19 @@ export async function scanRequest(payload = {}, dependencies) {
   }
 }
 
+export async function capabilitiesRequest(payload = {}, dependencies) {
+  const model = typeof payload?.model === 'string' ? payload.model.trim() : ''
+  if (!model) return { naturalSwitch: false }
+
+  try {
+    const { findModel } = dependencies ?? await loadModels()
+    const capabilities = findModel(model)
+    return { naturalSwitch: capabilities?.naturalSwitch === true }
+  } catch {
+    return { naturalSwitch: false }
+  }
+}
+
 export async function probeRequest(payload = {}, dependencies) {
   const host = typeof payload?.host === 'string' ? payload.host.trim() : ''
   if (isIP(host) !== 4) {
@@ -89,6 +103,7 @@ class PhilipsAirUiServer extends HomebridgePluginUiServer {
     })
     this.onRequest('/scan', scanRequest)
     this.onRequest('/probe', probeRequest)
+    this.onRequest('/capabilities', capabilitiesRequest)
     this.ready()
   }
 }
