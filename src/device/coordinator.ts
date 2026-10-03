@@ -1,7 +1,24 @@
 import { EventEmitter } from 'node:events'
 import type { Logging } from 'homebridge'
-import type { PhilipsCoapClient } from '../airctrl/client.js'
+import { NoInitialStatusError, type PhilipsCoapClient } from '../airctrl/client.js'
 import type { DeviceStatus } from '../airctrl/schema.js'
+
+export interface DeviceCoordinatorOptions {
+  /**
+   * Some devices accept Observe but do not publish an initial snapshot. For those
+   * models only, use a bounded bootstrap control after a short grace period to
+   * provoke the first status. This is bootstrap/reconnect recovery, never polling.
+   */
+  initialStatusNudge?: Record<string, unknown>
+  initialStatusGraceMs?: number
+  /** Target age of a fresh Observe session for one final bootstrap nudge. */
+  initialStatusSecondNudgeMs?: number
+  /**
+   * When set, status silence is expected. Refresh Observe and probe the device
+   * after this interval rather than immediately declaring the device unavailable.
+   */
+  statusSilenceProbeMs?: number
+}
 
 export class DeviceCoordinator extends EventEmitter {
   private lastStatus: DeviceStatus | null = null
@@ -10,17 +27,22 @@ export class DeviceCoordinator extends EventEmitter {
   private backoffMs = 5_000
   private watchdog: ReturnType<typeof setTimeout> | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private initialStatusNudgeTimer: ReturnType<typeof setTimeout> | null = null
+  private awaitingFreshStatus = false
+  private initialStatusNudgesSent = 0
   private observeAbort: AbortController | null = null
   private observeIterator: AsyncIterator<DeviceStatus> | null = null
   private clientClosed = false
   private shuttingDown = false
   private forceNextStatus = false
+  private statusEpoch = 0
 
   constructor(
     private client: PhilipsCoapClient,
     private readonly log: Logging,
     private readonly host: string,
     private readonly reconnectClient?: () => Promise<PhilipsCoapClient>,
+    private readonly options: DeviceCoordinatorOptions = {},
   ) {
     super()
   }
@@ -36,11 +58,28 @@ export class DeviceCoordinator extends EventEmitter {
   async start(): Promise<void> {
     await this.client.connect()
     if (this.shuttingDown) return
-    const { status, maxAge } = await this.client.getStatus()
-    if (this.shuttingDown) return
-    this.maxAgeS = maxAge
-    this.markAvailable()
-    this.ingest(status)
+
+    // CX3550-class quiet devices are best handled by establishing the long-lived
+    // Observe first, then using a bounded bootstrap if it remains silent. Avoid a
+    // throwaway getStatus() Observe and its timeout before the real subscription starts.
+    if (this.options.initialStatusNudge) {
+      this.markAvailable(`${this.host} available; waiting for initial status`)
+      this.resetBackoff()
+      this.beginFreshObservation()
+      return
+    }
+
+    try {
+      const { status, maxAge } = await this.client.getStatus()
+      if (this.shuttingDown) return
+      this.maxAgeS = maxAge
+      this.markAvailable()
+      this.ingest(status)
+    } catch (error) {
+      if (!(error instanceof NoInitialStatusError)) throw error
+      if (this.shuttingDown) return
+      this.markAvailable(`${this.host} available; waiting for initial status`)
+    }
     this.resetBackoff()
     this.beginObserving()
   }
@@ -54,6 +93,9 @@ export class DeviceCoordinator extends EventEmitter {
   }
 
   ingest(status: DeviceStatus): void {
+    this.statusEpoch += 1
+    this.awaitingFreshStatus = false
+    this.clearInitialStatusNudge()
     this.armWatchdog()
     const force = this.forceNextStatus
     this.forceNextStatus = false
@@ -122,6 +164,9 @@ export class DeviceCoordinator extends EventEmitter {
     this.shuttingDown = true
     if (this.watchdog) clearTimeout(this.watchdog)
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.clearInitialStatusNudge()
+    this.awaitingFreshStatus = false
+    this.initialStatusNudgesSent = 0
     this.watchdog = null
     this.reconnectTimer = null
     this.stopObserving()
@@ -129,15 +174,130 @@ export class DeviceCoordinator extends EventEmitter {
     this.removeAllListeners()
   }
 
+  private beginFreshObservation(): void {
+    this.awaitingFreshStatus = true
+    this.initialStatusNudgesSent = 0
+    this.beginObserving()
+    this.scheduleInitialStatusNudge(this.options.initialStatusGraceMs ?? 1_500)
+  }
+
+  private scheduleInitialStatusNudge(delay: number): void {
+    const values = this.options.initialStatusNudge
+    if (!values || this.shuttingDown || !this.awaitingFreshStatus) return
+    this.clearInitialStatusNudge()
+    this.initialStatusNudgeTimer = setTimeout(() => {
+      this.initialStatusNudgeTimer = null
+      if (this.shuttingDown || !this.awaitingFreshStatus) return
+      void this.sendInitialStatusNudge(values)
+    }, delay)
+  }
+
+  private async sendInitialStatusNudge(values: Record<string, unknown>): Promise<void> {
+    if (this.initialStatusNudgesSent >= 2) return
+    this.initialStatusNudgesSent += 1
+    try {
+      const accepted = await this.client.setControl(values, {
+        retries: 0,
+        resync: false,
+        timeoutMs: 2_000,
+        budgetMs: 2_000,
+      })
+      if (!accepted) this.log.debug(`${this.host} initial-status nudge was not accepted`)
+    } catch (error) {
+      if (!this.shuttingDown) {
+        this.log.debug(`${this.host} initial-status nudge failed: ${String(error)}`)
+      }
+    } finally {
+      if (!this.shuttingDown && this.awaitingFreshStatus && this.initialStatusNudgesSent === 1) {
+        const firstAt = this.options.initialStatusGraceMs ?? 1_500
+        const secondAt = this.options.initialStatusSecondNudgeMs ?? 65_000
+        this.scheduleInitialStatusNudge(Math.max(0, secondAt - firstAt))
+      }
+    }
+  }
+
+  private clearInitialStatusNudge(): void {
+    if (!this.initialStatusNudgeTimer) return
+    clearTimeout(this.initialStatusNudgeTimer)
+    this.initialStatusNudgeTimer = null
+  }
+
   private armWatchdog(): void {
     if (this.shuttingDown) return
     if (this.watchdog) clearTimeout(this.watchdog)
+    const silenceMs = this.options.statusSilenceProbeMs
+    const delayMs = silenceMs ?? this.maxAgeS * 3 * 1000
     this.watchdog = setTimeout(() => {
       this.watchdog = null
       if (this.shuttingDown) return
+      if (silenceMs !== undefined) {
+        void this.checkQuietLiveness(silenceMs)
+        return
+      }
       this.markUnavailable(`no status for ${this.maxAgeS * 3}s`)
       this.scheduleReconnect()
-    }, this.maxAgeS * 3 * 1000)
+    }, delayMs)
+  }
+
+  private async checkQuietLiveness(silenceMs: number): Promise<void> {
+    if (this.shuttingDown) return
+    const epoch = this.statusEpoch
+    this.log.debug(
+      `${this.host} no status for ${Math.round(silenceMs / 1000)}s; refreshing Observe and probing device`,
+    )
+    const startedAt = Date.now()
+
+    try {
+      const refreshed = this.client.refreshObservations()
+      if (refreshed < 1) throw new Error('no live Observe subscription to refresh')
+      await this.client.getInfo()
+      if (
+        this.shuttingDown
+        || this.statusEpoch !== epoch
+        || this.reconnectTimer !== null
+        || !this.isAvailable
+      ) return
+      this.log.debug(`${this.host} liveness probe succeeded in ${Date.now() - startedAt}ms`)
+      this.armWatchdog()
+      return
+    } catch (error) {
+      if (
+        this.shuttingDown
+        || this.statusEpoch !== epoch
+        || this.reconnectTimer !== null
+        || !this.isAvailable
+      ) return
+      this.log.warn(
+        `${this.host} liveness probe failed: ${String(error)}; attempting Observe re-registration`,
+      )
+    }
+
+    try {
+      // Abort the coordinator loop first so intentionally waking the client's
+      // old Observe cannot be mistaken for a transport failure. Async-generator
+      // return() alone cannot interrupt a generator that is waiting for a push.
+      this.stopObserving()
+      this.client.resetObservations()
+      this.beginObserving()
+      await this.client.getInfo()
+      if (
+        this.shuttingDown
+        || this.statusEpoch !== epoch
+        || this.reconnectTimer !== null
+        || !this.isAvailable
+      ) return
+      this.log.info(`${this.host} device reachable after Observe re-registration`)
+      this.armWatchdog()
+    } catch (error) {
+      if (
+        this.shuttingDown
+        || this.statusEpoch !== epoch
+        || this.reconnectTimer !== null
+        || !this.isAvailable
+      ) return
+      this.markUnavailable(`liveness probe and Observe re-registration failed: ${String(error)}`)
+      this.scheduleReconnect()
+    }
   }
 
   private beginObserving(): void {
@@ -224,6 +384,9 @@ export class DeviceCoordinator extends EventEmitter {
   private scheduleReconnect(): void {
     if (this.shuttingDown || !this.reconnectClient || this.reconnectTimer) return
     if (this.watchdog) clearTimeout(this.watchdog)
+    this.clearInitialStatusNudge()
+    this.awaitingFreshStatus = false
+    this.initialStatusNudgesSent = 0
     this.watchdog = null
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
@@ -247,11 +410,25 @@ export class DeviceCoordinator extends EventEmitter {
       this.clientClosed = false
       await replacement.connect()
       if (this.shuttingDown) return
-      const { status, maxAge } = await replacement.getStatus()
-      if (this.shuttingDown) return
-      this.maxAgeS = maxAge
-      this.markAvailable(`${this.host} Reconnected`)
-      this.ingest(status)
+
+      if (this.options.initialStatusNudge) {
+        this.markAvailable(`${this.host} Reconnected; waiting for initial status`)
+        this.resetBackoff()
+        this.beginFreshObservation()
+        return
+      }
+
+      try {
+        const { status, maxAge } = await replacement.getStatus()
+        if (this.shuttingDown) return
+        this.maxAgeS = maxAge
+        this.markAvailable(`${this.host} Reconnected`)
+        this.ingest(status)
+      } catch (error) {
+        if (!(error instanceof NoInitialStatusError)) throw error
+        if (this.shuttingDown) return
+        this.markAvailable(`${this.host} Reconnected; waiting for initial status`)
+      }
       this.resetBackoff()
       this.beginObserving()
     } catch (error) {

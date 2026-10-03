@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 import { RequestError } from '@homebridge/plugin-ui-utils'
-import { probeRequest, scanRequest } from '../homebridge-ui/server.js'
+import { capabilitiesRequest, probeRequest, scanRequest } from '../homebridge-ui/server.js'
 import { hostsInSubnet, localSubnets } from '../src/airctrl/discovery.js'
 import {
   addDeviceToConfig,
@@ -25,12 +25,12 @@ describe('custom UI server', () => {
     expect(probe).not.toHaveBeenCalled()
   })
 
-  it('reports a clear error when the host is not a Philips air purifier', async () => {
+  it('reports a clear error when the host is not a supported Philips device', async () => {
     await expect(
       probeRequest({ host: '192.168.1.20' }, { probeHost: vi.fn().mockResolvedValue(null) }),
     ).rejects.toMatchObject({
       constructor: RequestError,
-      message: 'No Philips air purifier answered at 192.168.1.20. Check the IP and that the device is on this network.',
+      message: 'No supported Philips device answered at 192.168.1.20. Check the IP and that the device is on this network.',
     })
   })
 
@@ -59,6 +59,21 @@ describe('custom UI server', () => {
       { discover, hostsInSubnet, localSubnets },
     )).rejects.toBeInstanceOf(RequestError)
     expect(discover).not.toHaveBeenCalled()
+  })
+
+  it('reports model-driven Natural Breeze capability', async () => {
+    const findModel = vi.fn(model => model.startsWith('CX3550')
+      ? { naturalSwitch: true }
+      : { naturalSwitch: false })
+
+    await expect(capabilitiesRequest(
+      { model: 'CX3550/01' },
+      { findModel },
+    )).resolves.toEqual({ naturalSwitch: true })
+    await expect(capabilitiesRequest(
+      { model: 'AC4220/12' },
+      { findModel },
+    )).resolves.toEqual({ naturalSwitch: false })
   })
 
   it('returns the discovered identity fields unchanged', async () => {
@@ -156,6 +171,7 @@ describe('config-ops (browser config logic)', () => {
       model: 'AC4220/12',
       exposeLight: true,
       exposeSleepSwitch: false,
+      exposeNaturalSwitch: false,
       exposeAutoPlusSwitch: false,
       exposeBeepSwitch: false,
     }])
@@ -266,6 +282,7 @@ describe('custom UI package', () => {
     expect(Object.keys(schema.schema.properties.devices.items.properties)).toEqual(expect.arrayContaining([
       'exposeLight',
       'exposeSleepSwitch',
+      'exposeNaturalSwitch',
       'exposeAutoPlusSwitch',
       'exposeBeepSwitch',
     ]))
@@ -283,6 +300,7 @@ describe('custom UI package', () => {
     for (const key of [
       'exposeLight',
       'exposeSleepSwitch',
+      'exposeNaturalSwitch',
       'exposeAutoPlusSwitch',
       'exposeBeepSwitch',
     ]) expect(html).toContain(key)

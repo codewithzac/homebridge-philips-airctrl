@@ -110,19 +110,36 @@ export class PhilipsAirPlatform implements DynamicPlatformPlugin {
 
   private async setUpDevice(device: DeviceConfig): Promise<void> {
     if (this.shuttingDown) return
+    const configuredModel = findModel(device.model ?? '')
+    const clientOptions = configuredModel
+      ? {
+          quietObserve: configuredModel.quietObserve,
+          ignoreMalformedObservePushes: configuredModel.ignoreMalformedObservePushes,
+        }
+      : undefined
     const makeClient = async (): Promise<PhilipsCoapClient> =>
-      new PhilipsCoapClient(device.host, device.port)
+      new PhilipsCoapClient(device.host, device.port, clientOptions)
     const coordinator = new DeviceCoordinator(
-      new PhilipsCoapClient(device.host, device.port),
+      new PhilipsCoapClient(device.host, device.port, clientOptions),
       this.log,
       device.host,
       makeClient,
+      configuredModel && (configuredModel.initialStatusNudge || configuredModel.statusSilenceProbeMs)
+        ? {
+            initialStatusNudge: configuredModel.initialStatusNudge,
+            statusSilenceProbeMs: configuredModel.statusSilenceProbeMs,
+          }
+        : undefined,
     )
     this.coordinators.add(coordinator)
 
     try {
       await coordinator.start()
-      if (!coordinator.status) throw new Error('device returned no status')
+      if (!coordinator.status) {
+        this.log.info(`${device.host} connected; waiting for its first status update`)
+        coordinator.once('status', () => this.attach(device, coordinator))
+        return
+      }
     } catch (error) {
       if (this.shuttingDown) {
         this.discard(coordinator)
