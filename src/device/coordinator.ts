@@ -3,6 +3,16 @@ import type { Logging } from 'homebridge'
 import { NoInitialStatusError, type PhilipsCoapClient } from '../airctrl/client.js'
 import type { DeviceStatus } from '../airctrl/schema.js'
 
+export interface DeviceCoordinatorOptions {
+  /**
+   * Some devices accept Observe but do not publish an initial snapshot. For those
+   * models only, send one harmless control after a short grace period to provoke
+   * the first status. This is bootstrap/reconnect recovery, never polling.
+   */
+  initialStatusNudge?: Record<string, unknown>
+  initialStatusGraceMs?: number
+}
+
 export class DeviceCoordinator extends EventEmitter {
   private lastStatus: DeviceStatus | null = null
   private maxAgeS = 60
@@ -10,6 +20,8 @@ export class DeviceCoordinator extends EventEmitter {
   private backoffMs = 5_000
   private watchdog: ReturnType<typeof setTimeout> | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private initialStatusNudgeTimer: ReturnType<typeof setTimeout> | null = null
+  private awaitingFreshStatus = false
   private observeAbort: AbortController | null = null
   private observeIterator: AsyncIterator<DeviceStatus> | null = null
   private clientClosed = false
@@ -21,6 +33,7 @@ export class DeviceCoordinator extends EventEmitter {
     private readonly log: Logging,
     private readonly host: string,
     private readonly reconnectClient?: () => Promise<PhilipsCoapClient>,
+    private readonly options: DeviceCoordinatorOptions = {},
   ) {
     super()
   }
@@ -36,6 +49,17 @@ export class DeviceCoordinator extends EventEmitter {
   async start(): Promise<void> {
     await this.client.connect()
     if (this.shuttingDown) return
+
+    // CX3550-class quiet devices are best handled by establishing the long-lived
+    // Observe first, then nudging once if it remains silent. Avoid a throwaway
+    // getStatus() Observe and its timeout before the real subscription starts.
+    if (this.options.initialStatusNudge) {
+      this.markAvailable(`${this.host} available; waiting for initial status`)
+      this.resetBackoff()
+      this.beginFreshObservation()
+      return
+    }
+
     try {
       const { status, maxAge } = await this.client.getStatus()
       if (this.shuttingDown) return
@@ -60,6 +84,8 @@ export class DeviceCoordinator extends EventEmitter {
   }
 
   ingest(status: DeviceStatus): void {
+    this.awaitingFreshStatus = false
+    this.clearInitialStatusNudge()
     this.armWatchdog()
     const force = this.forceNextStatus
     this.forceNextStatus = false
@@ -128,11 +154,53 @@ export class DeviceCoordinator extends EventEmitter {
     this.shuttingDown = true
     if (this.watchdog) clearTimeout(this.watchdog)
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.clearInitialStatusNudge()
+    this.awaitingFreshStatus = false
     this.watchdog = null
     this.reconnectTimer = null
     this.stopObserving()
     this.closeCurrentClient()
     this.removeAllListeners()
+  }
+
+  private beginFreshObservation(): void {
+    this.awaitingFreshStatus = true
+    this.beginObserving()
+    this.scheduleInitialStatusNudge()
+  }
+
+  private scheduleInitialStatusNudge(): void {
+    const values = this.options.initialStatusNudge
+    if (!values || this.shuttingDown) return
+    this.clearInitialStatusNudge()
+    const delay = this.options.initialStatusGraceMs ?? 1_500
+    this.initialStatusNudgeTimer = setTimeout(() => {
+      this.initialStatusNudgeTimer = null
+      if (this.shuttingDown || !this.awaitingFreshStatus) return
+      void this.sendInitialStatusNudge(values)
+    }, delay)
+  }
+
+  private async sendInitialStatusNudge(values: Record<string, unknown>): Promise<void> {
+    try {
+      const accepted = await this.client.setControl(values, {
+        retries: 0,
+        resync: false,
+        timeoutMs: 2_000,
+        budgetMs: 2_000,
+      })
+      if (!accepted) this.log.debug(`${this.host} initial-status nudge was not accepted`)
+    } catch (error) {
+      if (!this.shuttingDown) {
+        this.log.debug(`${this.host} initial-status nudge failed: ${String(error)}`)
+      }
+    }
+  }
+
+  private clearInitialStatusNudge(): void {
+    if (!this.initialStatusNudgeTimer) return
+    clearTimeout(this.initialStatusNudgeTimer)
+    this.initialStatusNudgeTimer = null
   }
 
   private armWatchdog(): void {
@@ -230,6 +298,8 @@ export class DeviceCoordinator extends EventEmitter {
   private scheduleReconnect(): void {
     if (this.shuttingDown || !this.reconnectClient || this.reconnectTimer) return
     if (this.watchdog) clearTimeout(this.watchdog)
+    this.clearInitialStatusNudge()
+    this.awaitingFreshStatus = false
     this.watchdog = null
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
@@ -253,6 +323,14 @@ export class DeviceCoordinator extends EventEmitter {
       this.clientClosed = false
       await replacement.connect()
       if (this.shuttingDown) return
+
+      if (this.options.initialStatusNudge) {
+        this.markAvailable(`${this.host} Reconnected; waiting for initial status`)
+        this.resetBackoff()
+        this.beginFreshObservation()
+        return
+      }
+
       try {
         const { status, maxAge } = await replacement.getStatus()
         if (this.shuttingDown) return
