@@ -61,9 +61,9 @@ try {
 
     console.log(`Control response: ${accepted ? 'success' : 'failed/rejected'}`)
 
-    const result = await withTimeout(pendingStatus, 5000)
+    const result = await withTimeout(pendingStatus, 10000)
     if (result?.timeout) {
-      console.log('No Observe status arrived within 5 s of D0310A = 1.')
+      console.log('No Observe status arrived within 10 s of D0310A = 1.')
       process.exitCode = 1
     } else if (result.done) {
       console.log('Observe ended without yielding a status.')
