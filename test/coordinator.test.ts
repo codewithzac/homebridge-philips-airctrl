@@ -98,7 +98,7 @@ describe('DeviceCoordinator', () => {
     coordinator.shutdown()
   })
 
-  it('nudges a quiet device once after the grace period and accepts the resulting status', async () => {
+  it('sends at most two bootstrap nudges when a fresh Observe remains quiet', async () => {
     vi.useFakeTimers()
     const device = controlledClient()
     const coordinator = new DeviceCoordinator(
@@ -108,8 +108,6 @@ describe('DeviceCoordinator', () => {
       undefined,
       { initialStatusNudge: { D0310A: 1 }, initialStatusGraceMs: 1_500 },
     )
-    const statuses: Record<string, unknown>[] = []
-    coordinator.on('status', status => statuses.push(status))
 
     await coordinator.start()
     await flush()
@@ -124,17 +122,10 @@ describe('DeviceCoordinator', () => {
     await vi.advanceTimersByTimeAsync(1)
     await flush()
     expect(device.setControl).toHaveBeenCalledOnce()
-    expect(device.setControl).toHaveBeenCalledWith(
+    expect(device.setControl).toHaveBeenLastCalledWith(
       { D0310A: 1 },
       { retries: 0, resync: false, timeoutMs: 2_000, budgetMs: 2_000 },
     )
-
-    device.push({ D03102: 0, D0310A: 1, D0310C: 2 })
-    await flush()
-
-    expect(coordinator.status).toEqual({ D03102: 0, D0310A: 1, D0310C: 2 })
-    expect(statuses).toEqual([{ D03102: 0, D0310A: 1, D0310C: 2 }])
-    expect(vi.getTimerCount()).toBe(1)
 
     await vi.advanceTimersByTimeAsync(63_499)
     expect(device.setControl).toHaveBeenCalledOnce()
@@ -142,9 +133,14 @@ describe('DeviceCoordinator', () => {
     await vi.advanceTimersByTimeAsync(1)
     await flush()
     expect(device.setControl).toHaveBeenCalledTimes(2)
+    expect(device.setControl).toHaveBeenLastCalledWith(
+      { D0310A: 1 },
+      { retries: 0, resync: false, timeoutMs: 2_000, budgetMs: 2_000 },
+    )
 
     await vi.advanceTimersByTimeAsync(120_000)
     expect(device.setControl).toHaveBeenCalledTimes(2)
+    expect(coordinator.status).toBeNull()
     coordinator.shutdown()
   })
 
