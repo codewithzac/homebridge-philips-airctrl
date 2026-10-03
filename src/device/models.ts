@@ -30,6 +30,11 @@ export interface DeviceModelConfig {
   naturalSwitch: boolean
   /** Model-specific control used to provoke an initial status when a fresh Observe remains quiet. */
   initialStatusNudge?: ControlWrites
+  /**
+   * For devices where a quiet Observe is normal, verify reachability after this
+   * much status silence instead of treating silence itself as a transport failure.
+   */
+  statusSilenceProbeMs?: number
 }
 
 function config(partial: Partial<DeviceModelConfig> & { apiGeneration: ApiGeneration }): DeviceModelConfig {
@@ -833,6 +838,7 @@ export const DEVICE_MODELS: Record<string, DeviceModelConfig> = {
     restoreManualAfterPreset: true,
     naturalSwitch: true,
     initialStatusNudge: { [Gen3Key.MODE_A]: 1 },
+    statusSilenceProbeMs: 10 * 60 * 1000,
     presetModes: {
       speed_1: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 1 },
       speed_2: { [Gen3Key.POWER]: 1, [Gen3Key.MODE_A]: 1, [Gen3Key.MODE_B]: 2 },
