@@ -29,7 +29,6 @@ vi.mock('../src/airctrl/client.js', () => ({
     readonly close = vi.fn()
     readonly setControl = vi.fn(async () => true)
     readonly refreshObservations = vi.fn(() => 1)
-    readonly cancelObservations = vi.fn(() => 1)
 
     constructor(private readonly host: string) {
       fakeClients.set(host, this)
