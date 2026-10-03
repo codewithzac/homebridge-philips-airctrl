@@ -270,6 +270,29 @@ describe('PhilipsCoapClient', () => {
     await second.return(undefined)
   })
 
+  it('can cancel live long-lived observations without closing the client', async () => {
+    const { device, client } = await start(request => {
+      if (pathOf(request) === '/sys/dev/sync') return { payload: '0DC377BA' }
+      if (pathOf(request) === '/sys/dev/status') {
+        return {
+          payload: encrypt('0DC377BA', JSON.stringify({ state: { reported: { D03102: 1 } } })),
+        }
+      }
+    })
+    await client.connect()
+
+    const iterator = client.observe()
+    await iterator.next()
+    const pending = iterator.next()
+
+    expect(client.cancelObservations()).toBe(1)
+    await expect(pending).rejects.toThrow(/observation reset/)
+    await waitFor(() => device.requests.some(request => observeValue(request) === 1))
+
+    // The client itself remains usable after the observation reset.
+    await expect(client.getInfo()).rejects.not.toThrow(/client closed/)
+  })
+
   it('sends an encrypted control payload and returns true for success', async () => {
     let desired: Record<string, unknown> | undefined
     const { client } = await start(request => {
@@ -443,6 +466,7 @@ describe('PhilipsCoapClient', () => {
       () => client.getStatus(),
       () => client.observe().next(),
       async () => client.refreshObservations(),
+      async () => client.cancelObservations(),
       () => client.setControl({ D03102: 1 }),
     ]
     for (const operation of operations) {
