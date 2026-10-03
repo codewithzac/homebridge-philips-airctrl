@@ -39,7 +39,7 @@ export interface PhilipsAirPlatformLike {
 export class PhilipsAirAccessory {
   private readonly deviceCharacteristics: HapCharacteristic[] = []
   private readonly purifier: HapService
-  private readonly airQuality: HapService
+  private readonly airQuality?: HapService
   private temperature?: HapService
   private humidity?: HapService
   private preFilter?: HapService
@@ -50,6 +50,7 @@ export class PhilipsAirAccessory {
   private lightControl?: LightControl
   private readonly lightCandidates: LightControl[]
   private sleep?: HapService
+  private natural?: HapService
   private autoPlus?: HapService
   private beep?: HapService
   private childLock?: HapCharacteristic
@@ -71,24 +72,27 @@ export class PhilipsAirAccessory {
       .setCharacteristic(C.Manufacturer, 'Philips')
       .setCharacteristic(C.Name, accessory.displayName)
 
-    this.purifier = accessory.getService(S.AirPurifier)
-      ?? accessory.addService(S.AirPurifier, accessory.displayName)
-    this.airQuality = accessory.getService(S.AirQualitySensor)
-      ?? accessory.addService(S.AirQualitySensor, `${accessory.displayName} Air Quality`)
+    if (model.serviceType === 'fan') {
+      const cachedPurifier = accessory.getService(S.AirPurifier)
+      if (cachedPurifier) accessory.removeService(cachedPurifier)
+      const cachedAirQuality = accessory.getService(S.AirQualitySensor)
+      if (cachedAirQuality) accessory.removeService(cachedAirQuality)
+      this.purifier = accessory.getService(S.Fanv2)
+        ?? accessory.addService(S.Fanv2, accessory.displayName)
+    } else {
+      const cachedFan = accessory.getService(S.Fanv2)
+      if (cachedFan) accessory.removeService(cachedFan)
+      this.purifier = accessory.getService(S.AirPurifier)
+        ?? accessory.addService(S.AirPurifier, accessory.displayName)
+      this.airQuality = accessory.getService(S.AirQualitySensor)
+        ?? accessory.addService(S.AirQualitySensor, `${accessory.displayName} Air Quality`)
+      this.purifier.addLinkedService(this.airQuality)
+    }
     this.purifier.setPrimaryService()
-    this.purifier.addLinkedService(this.airQuality)
 
     const active = this.purifier.getCharacteristic(C.Active)
-    const currentState = this.purifier.getCharacteristic(C.CurrentAirPurifierState)
-    const targetState = this.purifier.getCharacteristic(C.TargetAirPurifierState)
     const rotationSpeed = this.purifier.getCharacteristic(C.RotationSpeed)
     rotationSpeed.setProps({ minStep: 100 / Math.max(1, Object.keys(model.speeds).length) })
-    // TargetAirPurifierState is mandatory on Service.AirPurifier, so Home always draws the
-    // Auto/Manual toggle. On a model with no auto preset (CX3550, ladder-only siblings, any
-    // unknown-model fallback) selecting Auto could only ever error — hide it instead.
-    if (!model.presetModes.auto) {
-      targetState.setProps({ validValues: [C.TargetAirPurifierState.MANUAL] })
-    }
 
     this.onGet(active, device => this.powered(device)
       ? C.Active.ACTIVE
@@ -96,22 +100,6 @@ export class PhilipsAirAccessory {
     active.onSet(value => this.write({
       [this.power.key]: value === C.Active.ACTIVE ? this.power.on : this.power.off,
     }))
-    this.onGet(currentState, device => this.powered(device)
-      ? C.CurrentAirPurifierState.PURIFYING_AIR
-      : C.CurrentAirPurifierState.INACTIVE)
-    this.onGet(targetState, device => this.matchesControl(device, this.model.presetModes.auto)
-      ? C.TargetAirPurifierState.AUTO
-      : C.TargetAirPurifierState.MANUAL)
-    targetState.onSet(value => {
-      if (value === C.TargetAirPurifierState.AUTO) {
-        const control = this.model.presetModes.auto
-        if (!control) throw this.communicationError()
-        return this.write(control)
-      }
-      const control = Object.values(this.model.speeds)[this.lastManualMode - 1]
-      if (!control) throw this.communicationError()
-      return this.write(control)
-    })
     this.onGet(rotationSpeed, device => this.powered(device)
       ? rotationSpeedFromMode(this.speedMode(device), Object.keys(this.model.speeds).length)
       : 0)
@@ -122,6 +110,42 @@ export class PhilipsAirAccessory {
       if (!control) throw this.communicationError()
       return this.write(control)
     })
+
+    if (model.serviceType === 'purifier') {
+      const currentState = this.purifier.getCharacteristic(C.CurrentAirPurifierState)
+      const targetState = this.purifier.getCharacteristic(C.TargetAirPurifierState)
+      if (!model.presetModes.auto) {
+        targetState.setProps({ validValues: [C.TargetAirPurifierState.MANUAL] })
+      }
+      this.onGet(currentState, device => this.powered(device)
+        ? C.CurrentAirPurifierState.PURIFYING_AIR
+        : C.CurrentAirPurifierState.INACTIVE)
+      this.onGet(targetState, device => this.matchesControl(device, this.model.presetModes.auto)
+        ? C.TargetAirPurifierState.AUTO
+        : C.TargetAirPurifierState.MANUAL)
+      targetState.onSet(value => {
+        if (value === C.TargetAirPurifierState.AUTO) {
+          const control = this.model.presetModes.auto
+          if (!control) throw this.communicationError()
+          return this.write(control)
+        }
+        const control = Object.values(this.model.speeds)[this.lastManualMode - 1]
+        if (!control) throw this.communicationError()
+        return this.write(control)
+      })
+    }
+
+    if (model.oscillation) {
+      const swing = this.purifier.getCharacteristic(C.SwingMode)
+      this.onGet(swing, device => device[model.oscillation!.key] === model.oscillation!.off
+        ? C.SwingMode.SWING_DISABLED
+        : C.SwingMode.SWING_ENABLED)
+      swing.onSet(value => this.write({
+        [model.oscillation!.key]: value === C.SwingMode.SWING_ENABLED
+          ? model.oscillation!.on
+          : model.oscillation!.off,
+      }))
+    }
     // Capability gating is model-driven, never payload-driven: a partial status report
     // must not permanently drop a service, and must never destroy a cached one (that
     // loses the user's HomeKit room assignments and automations).
@@ -138,10 +162,12 @@ export class PhilipsAirAccessory {
       this.purifier.removeCharacteristic(this.purifier.getCharacteristic(C.LockPhysicalControls))
     }
 
-    const pm25 = this.airQuality.getCharacteristic(C.PM2_5Density)
-    const airQuality = this.airQuality.getCharacteristic(C.AirQuality)
-    this.onGet(pm25, device => this.number(device[this.pm25Key]))
-    this.onGet(airQuality, device => airQualityFromPm25(device[this.pm25Key]))
+    if (this.airQuality) {
+      const pm25 = this.airQuality.getCharacteristic(C.PM2_5Density)
+      const airQuality = this.airQuality.getCharacteristic(C.AirQuality)
+      this.onGet(pm25, device => this.number(device[this.pm25Key]))
+      this.onGet(airQuality, device => airQualityFromPm25(device[this.pm25Key]))
+    }
 
     this.lightCandidates = model.lights
       .map(key => this.lightValues(key))
@@ -149,19 +175,46 @@ export class PhilipsAirAccessory {
     this.syncOptionalServices(status)
 
     const cachedSleep = accessory.getServiceById(S.Switch, 'sleep')
-    if (config.exposeSleepSwitch && this.model.presetModes.sleep && this.model.presetModes.auto) {
+    if (
+      config.exposeSleepSwitch
+      && this.model.presetModes.sleep
+      && (this.model.presetModes.auto || this.model.restoreManualAfterPreset)
+    ) {
       this.sleep = cachedSleep ?? accessory.addService(S.Switch, 'Sleep Mode', 'sleep')
       this.purifier.addLinkedService(this.sleep)
       const on = this.sleep.getCharacteristic(C.On)
       this.onGet(on, device =>
         this.powered(device) && this.matchesControl(device, this.model.presetModes.sleep))
       on.onSet(value => {
-        const control = value ? this.model.presetModes.sleep : this.model.presetModes.auto
+        const control = value
+          ? this.model.presetModes.sleep
+          : this.model.presetModes.auto
+            ?? (this.model.restoreManualAfterPreset
+              ? Object.values(this.model.speeds)[this.lastManualMode - 1]
+              : undefined)
         if (!control) throw this.communicationError()
         return this.write(control)
       })
     } else if (cachedSleep) {
       accessory.removeService(cachedSleep)
+    }
+
+    const cachedNatural = accessory.getServiceById(S.Switch, 'natural')
+    if (config.exposeNaturalSwitch && this.model.naturalSwitch && this.model.presetModes.natural) {
+      this.natural = cachedNatural ?? accessory.addService(S.Switch, 'Natural Breeze', 'natural')
+      this.purifier.addLinkedService(this.natural)
+      const on = this.natural.getCharacteristic(C.On)
+      this.onGet(on, device =>
+        this.powered(device) && this.matchesControl(device, this.model.presetModes.natural))
+      on.onSet(value => {
+        const control = value
+          ? this.model.presetModes.natural
+          : Object.values(this.model.speeds)[this.lastManualMode - 1]
+        if (!control) throw this.communicationError()
+        return this.write(control)
+      })
+    } else if (cachedNatural) {
+      accessory.removeService(cachedNatural)
     }
 
     const cachedAutoPlus = accessory.getServiceById(S.Switch, 'auto-plus')
@@ -528,20 +581,26 @@ export class PhilipsAirAccessory {
     const C = this.platform.Characteristic
     const speedCount = Object.keys(this.model.speeds).length
     const mode = this.speedMode(status)
-    if (mode !== null) this.lastManualMode = mode
+    const inRestorablePreset = this.model.restoreManualAfterPreset && (
+      this.matchesControl(status, this.model.presetModes.sleep)
+      || this.matchesControl(status, this.model.presetModes.natural)
+    )
+    if (mode !== null && !inRestorablePreset) this.lastManualMode = mode
     const powered = this.powered(status)
 
     this.update(this.purifier.getCharacteristic(C.Active), powered ? C.Active.ACTIVE : C.Active.INACTIVE)
-    this.update(
-      this.purifier.getCharacteristic(C.CurrentAirPurifierState),
-      powered ? C.CurrentAirPurifierState.PURIFYING_AIR : C.CurrentAirPurifierState.INACTIVE,
-    )
-    this.update(
-      this.purifier.getCharacteristic(C.TargetAirPurifierState),
-      this.matchesControl(status, this.model.presetModes.auto)
-        ? C.TargetAirPurifierState.AUTO
-        : C.TargetAirPurifierState.MANUAL,
-    )
+    if (this.model.serviceType === 'purifier') {
+      this.update(
+        this.purifier.getCharacteristic(C.CurrentAirPurifierState),
+        powered ? C.CurrentAirPurifierState.PURIFYING_AIR : C.CurrentAirPurifierState.INACTIVE,
+      )
+      this.update(
+        this.purifier.getCharacteristic(C.TargetAirPurifierState),
+        this.matchesControl(status, this.model.presetModes.auto)
+          ? C.TargetAirPurifierState.AUTO
+          : C.TargetAirPurifierState.MANUAL,
+      )
+    }
     this.update(
       this.purifier.getCharacteristic(C.RotationSpeed),
       powered ? rotationSpeedFromMode(mode, speedCount) : 0,
@@ -552,14 +611,16 @@ export class PhilipsAirAccessory {
         ? C.LockPhysicalControls.CONTROL_LOCK_ENABLED
         : C.LockPhysicalControls.CONTROL_LOCK_DISABLED,
     )
-    this.update(
-      this.airQuality.getCharacteristic(C.PM2_5Density),
-      this.number(status[this.pm25Key]),
-    )
-    this.update(
-      this.airQuality.getCharacteristic(C.AirQuality),
-      airQualityFromPm25(status[this.pm25Key]),
-    )
+    if (this.airQuality) {
+      this.update(
+        this.airQuality.getCharacteristic(C.PM2_5Density),
+        this.number(status[this.pm25Key]),
+      )
+      this.update(
+        this.airQuality.getCharacteristic(C.AirQuality),
+        airQualityFromPm25(status[this.pm25Key]),
+      )
+    }
     if (this.temperature && this.temperatureKey) this.update(
       this.temperature.getCharacteristic(C.CurrentTemperature),
       this.temperatureValue(status[this.temperatureKey]),
@@ -582,9 +643,19 @@ export class PhilipsAirAccessory {
       this.light.getCharacteristic(C.On),
       status[this.lightControl.key] !== this.lightControl.off,
     )
+    if (this.model.oscillation) this.update(
+      this.purifier.getCharacteristic(C.SwingMode),
+      status[this.model.oscillation.key] === this.model.oscillation.off
+        ? C.SwingMode.SWING_DISABLED
+        : C.SwingMode.SWING_ENABLED,
+    )
     if (this.sleep) this.update(
       this.sleep.getCharacteristic(C.On),
       powered && this.matchesControl(status, this.model.presetModes.sleep),
+    )
+    if (this.natural) this.update(
+      this.natural.getCharacteristic(C.On),
+      powered && this.matchesControl(status, this.model.presetModes.natural),
     )
     if (this.autoPlus) this.update(
       this.autoPlus.getCharacteristic(C.On),

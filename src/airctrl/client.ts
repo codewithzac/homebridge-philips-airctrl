@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { decrypt, encrypt, nextKey } from './crypto.js'
+import { decrypt, encrypt, MalformedPayloadError, nextKey } from './crypto.js'
 import {
   DeviceInfoSchema,
   parseStatusPayload,
@@ -20,6 +20,18 @@ export class NotConnectedError extends Error {
     super('client key not initialised; call connect() first')
     this.name = 'NotConnectedError'
   }
+}
+
+export class NoInitialStatusError extends Error {
+  constructor() {
+    super('device accepted status observation but sent no initial status')
+    this.name = 'NoInitialStatusError'
+  }
+}
+
+export interface PhilipsCoapClientOptions {
+  quietObserve?: boolean
+  ignoreMalformedObservePushes?: boolean
 }
 
 export interface SetControlOptions {
@@ -45,7 +57,11 @@ export class PhilipsCoapClient {
   /** Serialises {@link setControl}: the rolling key must advance one write at a time. */
   private controlChain: Promise<unknown> = Promise.resolve()
 
-  constructor(host: string, port = 5683) {
+  constructor(
+    host: string,
+    port = 5683,
+    private readonly options: PhilipsCoapClientOptions = {},
+  ) {
     this.socket = new CoapSocket(host, port)
   }
 
@@ -92,8 +108,13 @@ export class PhilipsCoapClient {
     this.requireKey()
     let observation: Observation | undefined
     try {
-      observation = await this.socket.observe({ path: STATUS_PATH, onNotify: () => {} })
+      observation = await this.socket.observe({
+        path: STATUS_PATH,
+        onNotify: () => {},
+        allowQuiet: this.options.quietObserve === true,
+      })
       this.requireOpen()
+      if (!observation.first) throw new NoInitialStatusError()
       const maxAgeOption = findOption(observation.first.options, CoapOption.MaxAge)
       const maxAge = maxAgeOption ? bufferToUint(maxAgeOption.value) : DEFAULT_MAX_AGE
       return {
@@ -125,6 +146,10 @@ export class PhilipsCoapClient {
         wake?.()
         wake = undefined
       } catch (error) {
+        // Some Philips firmware occasionally emits a same-token Observe packet
+        // that is not an encrypted status blob. Dropping one malformed packet is
+        // safer than tearing down an otherwise healthy long-lived observation.
+        if (this.options.ignoreMalformedObservePushes === true && error instanceof MalformedPayloadError) return
         fail(error)
       }
     }
@@ -135,6 +160,7 @@ export class PhilipsCoapClient {
         path: STATUS_PATH,
         onNotify: enqueue,
         onError: fail,
+        allowQuiet: this.options.quietObserve === true,
       })
     } catch (error) {
       this.requireOpen()
@@ -148,7 +174,7 @@ export class PhilipsCoapClient {
     this.observationFailures.set(observation, fail)
 
     try {
-      yield this.parseStatus(observation.first)
+      if (observation.first) yield this.parseStatus(observation.first)
       while (true) {
         if (failure) throw failure
         if (queue.length) {
@@ -167,6 +193,19 @@ export class PhilipsCoapClient {
       this.observationFailures.delete(observation)
       if (this.observations.delete(observation)) observation.cancel()
     }
+  }
+
+  /**
+   * Re-register every live long-lived Observe using its existing token.
+   *
+   * This is deliberately separate from {@link observe}: callers that never ask
+   * for revalidation retain exactly the existing observation behaviour.
+   * Temporary observations created by {@link getStatus} are not included.
+   */
+  refreshObservations(): number {
+    this.requireOpen()
+    for (const observation of this.observations) observation.refresh()
+    return this.observations.size
   }
 
   /**

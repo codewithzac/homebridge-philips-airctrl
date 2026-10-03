@@ -28,6 +28,7 @@ vi.mock('../src/airctrl/client.js', () => ({
   PhilipsCoapClient: class {
     readonly close = vi.fn()
     readonly setControl = vi.fn(async () => true)
+    readonly refreshObservations = vi.fn(() => 1)
 
     constructor(private readonly host: string) {
       fakeClients.set(host, this)
@@ -42,6 +43,10 @@ vi.mock('../src/airctrl/client.js', () => ({
 
     async getStatus(): Promise<{ status: DeviceStatus, maxAge: number }> {
       return { status: fakeDevices.get(this.host)?.status ?? {}, maxAge: 60 }
+    }
+
+    async getInfo(): Promise<{ modelid?: string }> {
+      return { modelid: String(fakeDevices.get(this.host)?.status?.[Gen3Key.MODEL_ID] ?? '') }
     }
 
     observe(): AsyncIterable<DeviceStatus> {

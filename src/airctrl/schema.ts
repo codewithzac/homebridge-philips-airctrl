@@ -40,13 +40,15 @@ export const DeviceConfigSchema = z.object({
   /** Optional display-name override; otherwise the device's own name is used. */
   name: z.string().optional(),
   /**
-   * Model recorded by the setup UI, for display only. Declared so zod's default
-   * key-stripping does not silently drop what the UI wrote.
+   * Model recorded by the setup UI. Used to select model-specific behaviour
+   * before the first status payload is available, and retained for display.
    */
   model: z.string().optional(),
   port: z.number().int().positive().default(5683),
   /** Sleep is a distinct device mode, so it is offered separately from the speed slider. */
   exposeSleepSwitch: z.boolean().default(false),
+  /** Natural Breeze is a distinct fan mode, exposed separately from the speed slider. */
+  exposeNaturalSwitch: z.boolean().default(false),
   /** Auto+ AI (D03180). */
   exposeAutoPlusSwitch: z.boolean().default(false),
   /** Beep (D03130). On writes 100, not 1 — see device/keys.ts. */

@@ -4,7 +4,7 @@
   "singular": true,
   "customUi": true,
   "customUiPath": "./homebridge-ui",
-  "headerDisplay": "Philips air purifiers over encrypted CoAP. Scan for devices below — no JSON editing required.",
+  "headerDisplay": "Philips air purifiers and supported fans over encrypted CoAP. Scan for devices below — no JSON editing required.",
   "schema": {
     "type": "object",
     "properties": {
@@ -44,6 +44,11 @@
             },
             "exposeSleepSwitch": {
               "title": "Expose Sleep switch",
+              "type": "boolean",
+              "default": false
+            },
+            "exposeNaturalSwitch": {
+              "title": "Expose Natural Breeze switch",
               "type": "boolean",
               "default": false
             },

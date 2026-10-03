@@ -10,6 +10,32 @@ push, and `.github/workflows/publish.yml` tags the commit, creates the GitHub re
 using the matching section below, and publishes to npm. A release will **fail** if
 this file has no `## [x.y.z]` section for the version being released.
 
+## [0.2.0] - YYYY-MM-DD
+
+### Added
+
+- HomeKit support for the Philips CX3550/01 fan using a native
+  Fan service, with power, three manual speeds, and oscillation.
+- Opt-in Sleep and Natural Breeze switches. Turning either mode off returns the
+  fan to its previous manual speed.
+
+### Notes
+
+Behaviour confirmed against a CX3550/01 that differs from what the published
+device registries describe:
+
+- Fan speed is selected through `D0310C`; `D0310D` is treated as reported state
+  rather than written as part of a speed change.
+- Oscillation is enabled by writing `17242`, while enabled status can report a
+  different non-zero value. Any non-zero reported value is therefore treated as
+  enabled.
+- The fan may establish a status observation without immediately publishing an
+  initial snapshot. The plugin uses a bounded bootstrap mechanism to obtain that
+  state when required; normal status updates remain event-driven rather than
+  polled.
+- Malformed same-token Observe packets that are not encrypted status payloads
+  are ignored instead of terminating an otherwise healthy observation.
+
 ## [0.1.0] - 2026-07-31
 
 First release.

@@ -5,7 +5,8 @@
 [![npm](https://img.shields.io/npm/dt/homebridge-philips-airctrl)](https://www.npmjs.com/package/homebridge-philips-airctrl)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-HomeKit support for Philips air purifiers over their local, encrypted CoAP API.
+HomeKit support for Philips air purifiers and supported fans over their local,
+encrypted CoAP API.
 
 **No Python. No cloud. No third-party CoAP library.** The protocol — CoAP framing,
 the AES-128-CBC encryption, the device key registry — is implemented in TypeScript
@@ -25,12 +26,14 @@ with the device model registry from
 
 - Homebridge 2.0 or newer
 - Node.js 22.12+ or 24+
-- A Philips purifier on your local network that speaks the CoAP API (port 5683)
+- A supported Philips air purifier or fan on your local network that speaks the
+  CoAP API (port 5683)
 
 ## Setup
 
 Install the plugin, then open its settings in the Homebridge UI. The panel scans
-your network automatically and lists any purifiers it finds — click **Add**. There
+your network automatically and lists any supported devices it finds — click
+**Add**. There
 is no JSON to edit.
 
 If a device is not found (some networks block the subnet sweep), type its IP into
@@ -41,12 +44,13 @@ If a device is not found (some networks block the subnet sweep), type its IP int
 | Service | Notes |
 | --- | --- |
 | Air Purifier | On/off, fan speed, and Auto/Manual |
+| Fan | On/off, fan speed, and oscillation on supported fan models |
 | Air Quality Sensor | Derived from PM2.5 |
 | Temperature Sensor | If the model reports it |
 | Humidity Sensor | If the model reports it |
 | Filter Maintenance | Pre-filter and NanoProtect life, with change indication |
 | Lightbulb | Display light, on models with a writable light control |
-| Switch | Sleep mode, Auto+ AI, and Beep — each opt-in |
+| Switch | Sleep mode, Natural Breeze, Auto+ AI, and Beep — each opt-in |
 
 Optional services appear only if your model supports them and the device actually
 reports the corresponding keys.
@@ -57,7 +61,8 @@ Everything is set from the UI. Each device has:
 
 - **IP Address** — required
 - **Name** — defaults to the name the device reports
-- **Display light**, **Sleep switch**, **Auto+ AI switch**, **Beep switch** — opt-ins
+- **Display light**, **Sleep switch**, **Natural Breeze switch**,
+  **Auto+ AI switch**, **Beep switch** — opt-ins
 
 The CoAP port defaults to 5683 and is only settable via the JSON config editor,
 since it never differs on stock firmware.
