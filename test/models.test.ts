@@ -61,6 +61,7 @@ describe('resolveModel', () => {
       ignoreMalformedObservePushes: true,
       restoreManualAfterPreset: true,
       naturalSwitch: true,
+      initialStatusNudge: { D0310A: 1 },
       oscillation: { key: 'D0320F', on: 17242, off: 0 },
     })
 
@@ -71,6 +72,7 @@ describe('resolveModel', () => {
       ignoreMalformedObservePushes: false,
       restoreManualAfterPreset: false,
       naturalSwitch: false,
+      initialStatusNudge: undefined,
     })
   })
 
