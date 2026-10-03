@@ -95,6 +95,10 @@ try {
   console.log('If another STATUS line appears, the original subscription is still live.')
   console.log('Press Ctrl-C when finished.')
 
+  // CoapSocket deliberately unrefs its UDP socket so it cannot keep a Homebridge
+  // process alive by itself. This standalone probe needs one referenced handle
+  // while we wait for a post-refresh physical/app change.
+  process.stdin.resume()
   await reader
 } finally {
   await stop()
