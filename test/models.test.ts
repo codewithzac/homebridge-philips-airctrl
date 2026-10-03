@@ -72,8 +72,8 @@ describe('resolveModel', () => {
       ignoreMalformedObservePushes: false,
       restoreManualAfterPreset: false,
       naturalSwitch: false,
-      initialStatusNudge: undefined,
     })
+    expect(purifier.initialStatusNudge).toBeUndefined()
   })
 
   it('falls back to a generic config for an unknown model', () => {
