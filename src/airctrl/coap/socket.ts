@@ -40,6 +40,8 @@ export interface ObserveOptions {
 
 export interface Observation {
   first?: DecodedCoapMessage
+  /** Re-register interest using the existing token without replacing the live handler. */
+  refresh: () => void
   /** Proactively deregister: same token, Observe = 1. */
   cancel: () => void
 }
@@ -223,6 +225,14 @@ export class CoapSocket {
 
     return {
       first,
+      refresh: () => {
+        if (this.closed || !this.handlers.has(key)) return
+        try {
+          this.transmit('GET', path, token, 0, undefined, onError)
+        } catch (error) {
+          onError?.(error as Error)
+        }
+      },
       cancel: () => {
         // Deregister the handler first so a push racing the cancellation is
         // dropped rather than delivered after the caller has stopped listening.
